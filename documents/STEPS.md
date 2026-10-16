@@ -16,7 +16,9 @@
 - [步驟 4：登入/註冊、Session 與攔截器](#步驟-4登入註冊session-與攔截器)
 - [步驟 5：收藏 API（加入、清單、刪除）](#步驟-5收藏-api加入清單刪除)
 - [步驟 6：建立前端專案、共用元件與路由守衛](#步驟-6建立前端專案共用元件與路由守衛)
-- 步驟 7～11：（完成後陸續補上）
+- [步驟 7：首頁（查詢、錯誤提示、加入收藏）](#步驟-7首頁查詢錯誤提示加入收藏)
+- [步驟 8：登入 / 註冊頁](#步驟-8登入--註冊頁)
+- 步驟 9～11：（完成後陸續補上）
 - 如何快速上手：（全部完成後補上）
 
 ---
@@ -5122,7 +5124,593 @@ curl http://localhost:5173/api/books/9789861343722
 
 ---
 
-<!-- 步驟 7 之後的內容會在完成時陸續補上 -->
+## 步驟 7：首頁（查詢、錯誤提示、加入收藏）
+
+### 目標
+完成首頁 `/` 的三種狀態（DESIGN.md 5.1）與「加入收藏」：
+- (a) 初始：虛線空狀態框
+- (b) 查詢成功：結果卡片＋「+ 加入收藏」
+- (c) 查詢錯誤：紅色錯誤框「⚠ 錯誤提示：{訊息}」
+- 查詢中：按鈕顯示「查詢中...」並暫時停用
+- 加入收藏：未登入 → 提示並導向登入頁；已登入 → 成功／重複提示
+
+### 名詞先解釋
+- **`ref`**：Vue 的「會通知畫面的變數」，適合放單一值（字串、數字、物件）。讀寫時要加 `.value`（`book.value = ...`），但在 `<template>` 裡直接寫 `book` 就好。
+  - 和 `reactive` 的差別：`reactive` 用在「一整個物件」（像 `auth`、`toast`），`ref` 用在「單一變數」。
+- **`v-if` / `v-else-if` / `v-else`**：條件顯示。像一串 if-else，只會顯示**第一個**成立的區塊。首頁就靠它在三種狀態之間切換。
+- **`@submit.prevent`**：表單送出時（按按鈕或按 Enter）執行函式，`.prevent` 阻止瀏覽器預設的「重新整理網頁」。
+- **`encodeURIComponent`**：把字串轉成可以安全放進網址的格式（例如空白變 `%20`）。
+
+### 建立或修改的檔案
+```
+frontend/src/
+├── validators.js         新增：前端欄位驗證（這一步先放 ISBN）
+└── views/HomeView.vue    修改：完成首頁
+```
+
+### 7-1 前端驗證：validators.js
+
+**`frontend/src/validators.js`**
+
+```js
+// 前端欄位驗證：規則與後端相同（後端仍會再驗證一次，前端驗證只是讓使用者更快看到提示）。
+// 每個函式回傳「錯誤訊息」；沒有錯誤時回傳空字串 ''。
+
+import { MESSAGES } from '@/messages'
+
+/** ISBN：去除前後空白後，必須是 13 碼數字 */
+export function validateIsbn(isbn) {
+  if (isbn === '') {
+    return MESSAGES.ISBN_REQUIRED
+  }
+  if (!/^[0-9]{13}$/.test(isbn)) {
+    return MESSAGES.ISBN_INVALID
+  }
+  return ''
+}
+```
+
+**白話解釋**
+- `/^[0-9]{13}$/` 是 JavaScript 的正規表示式寫法（前後用斜線包起來），規則和後端的 `[0-9]{13}` 一樣。`.test(isbn)` 回傳 true 或 false。
+- **為什麼前後端都要驗證？**
+  - 前端驗證：使用者馬上看到提示，不用等網路來回（體驗好）。
+  - 後端驗證：前端的程式碼使用者看得到也改得到，有人可以跳過畫面直接呼叫 API（安全）。
+  - 所以**後端驗證是必須的，前端驗證是加分**。
+- **空白 ISBN 為什麼只能由前端處理？**（設計決策 10）API 網址是 `/api/books/{isbn}`，ISBN 空白時網址變成 `/api/books/`，根本對不到這支 API。所以由前端直接顯示「請輸入 ISBN 碼」，不呼叫 API。
+- 之後的登入頁（步驟 8）也會在這個檔案加上暱稱、手機的驗證。
+
+### 7-2 首頁：HomeView.vue
+
+**`frontend/src/views/HomeView.vue`**
+
+```vue
+<!--
+  首頁 /：用 ISBN 查詢書籍（DESIGN.md 5.1）。
+  三種狀態：初始（虛線空狀態框）、查詢成功（結果卡片）、查詢錯誤（紅色錯誤框）。
+-->
+<script setup>
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import PageTitle from '@/components/PageTitle.vue'
+import BaseInput from '@/components/BaseInput.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import BaseCard from '@/components/BaseCard.vue'
+import ErrorBox from '@/components/ErrorBox.vue'
+import EmptyBox from '@/components/EmptyBox.vue'
+import { api } from '@/api'
+import { auth, setLoggedOut } from '@/auth'
+import { showToast } from '@/toast'
+import { MESSAGES } from '@/messages'
+import { validateIsbn } from '@/validators'
+
+const router = useRouter()
+
+// ===== 畫面狀態（ref：值一改，畫面就自動更新） =====
+const isbnInput = ref('') // 輸入框的內容（保留使用者輸入的原樣）
+const book = ref(null) // 查到的書；null = 沒有結果
+const errorMessage = ref('') // 錯誤訊息；'' = 沒有錯誤
+const searching = ref(false) // 是否正在查詢（按鈕顯示「查詢中...」）
+const adding = ref(false) // 是否正在加入收藏（避免連按）
+
+/** 按下「查詢」 */
+async function search() {
+  const isbn = isbnInput.value.trim()
+
+  // 每次查詢前先清掉上一次的結果與錯誤
+  book.value = null
+  errorMessage.value = ''
+
+  // 前端先驗證：空白、格式錯誤都不呼叫 API（設計決策 10）
+  const invalid = validateIsbn(isbn)
+  if (invalid) {
+    errorMessage.value = invalid
+    return
+  }
+
+  searching.value = true
+  const result = await api.get(`/api/books/${encodeURIComponent(isbn)}`)
+  searching.value = false
+
+  if (result.ok) {
+    book.value = result.data
+  } else {
+    // 404 找不到此書籍、503 查詢失敗，請稍後再試…都直接顯示後端的訊息
+    errorMessage.value = result.data.message
+  }
+}
+
+/** 按下「+ 加入收藏」 */
+async function addFavorite() {
+  // 未登入：提示並導向登入/註冊頁
+  if (!auth.user) {
+    goLogin()
+    return
+  }
+
+  adding.value = true
+  const result = await api.post('/api/favorites/add', { isbn: book.value.isbn })
+  adding.value = false
+
+  if (result.ok) {
+    showToast(result.data.message) // 已成功加入收藏
+  } else if (result.status === 409) {
+    showToast(result.data.message, 'warning') // 此書籍已在收藏清單中，請勿重複收藏
+  } else if (result.status === 401) {
+    // 畫面以為有登入，但 Session 已經失效：當作未登入處理
+    setLoggedOut()
+    goLogin()
+  } else {
+    showToast(result.data.message, 'error')
+  }
+}
+
+function goLogin() {
+  showToast(MESSAGES.FAVORITE_LOGIN_REQUIRED, 'warning')
+  router.push('/login')
+}
+
+/** 欄位沒有資料時顯示「—」 */
+function orDash(value) {
+  return value ? value : '—'
+}
+</script>
+
+<template>
+  <div class="page page--wide">
+    <PageTitle title="首頁 — 書籍查詢" />
+
+    <!-- form + @submit.prevent：按 Enter 也能查詢，而且不會重新整理網頁 -->
+    <form class="search" @submit.prevent="search">
+      <BaseInput
+        v-model="isbnInput"
+        class="search__input"
+        label="ISBN 查詢"
+        placeholder="請輸入 13 位數 ISBN 碼..."
+        inputmode="numeric"
+      />
+      <BaseButton type="submit" class="search__button" spaced :disabled="searching">
+        {{ searching ? '查詢中...' : '查詢' }}
+      </BaseButton>
+    </form>
+
+    <!-- 狀態 (c)：查詢錯誤 -->
+    <ErrorBox v-if="errorMessage">⚠ 錯誤提示：{{ errorMessage }}</ErrorBox>
+
+    <!-- 狀態 (b)：查詢成功 -->
+    <BaseCard v-else-if="book">
+      <p class="result__caption"><strong>查詢結果</strong> (Search Result)</p>
+      <h2 class="result__title">書名：{{ book.title }}</h2>
+      <p class="result__line">作者：{{ orDash(book.author) }}</p>
+      <p class="result__line">出版日期：{{ orDash(book.publishDate) }}</p>
+      <p class="result__isbn">ISBN：{{ book.isbn }}</p>
+      <BaseButton variant="secondary" class="result__add" :disabled="adding" @click="addFavorite">
+        + 加入收藏
+      </BaseButton>
+    </BaseCard>
+
+    <!-- 狀態 (a)：初始（查詢中不顯示） -->
+    <EmptyBox v-else-if="!searching">
+      請在上方輸入 ISBN 碼並點擊「查詢」以檢視書籍詳細資訊
+    </EmptyBox>
+  </div>
+</template>
+
+<style scoped>
+/* ===== 查詢列：輸入框約 70%＋按鈕約 30%，同一列 ===== */
+.search {
+  display: flex;
+  align-items: flex-end; /* 按鈕對齊輸入框底部（輸入框上方有標籤） */
+  gap: 32px;
+  margin-bottom: 48px;
+}
+
+.search__input {
+  flex: 7;
+}
+
+.search__button {
+  flex: 3;
+}
+
+/* ===== 結果卡片 ===== */
+.result__caption {
+  margin: 0 0 24px;
+  color: var(--color-text-muted);
+}
+
+.result__title {
+  margin: 0 0 20px;
+  font-size: 1.3em;
+  font-weight: 700;
+}
+
+.result__line {
+  margin: 0 0 16px;
+}
+
+.result__isbn {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9em;
+}
+
+/* 「+ 加入收藏」：靠左、約卡片寬 35%；與 ISBN 行至少隔 16px（DESIGN.md 5.1-b） */
+.result__add {
+  width: 35%;
+  margin-top: 24px;
+}
+
+/* 平板：按鈕約卡片寬 50% */
+@media (max-width: 1023px) {
+  .search {
+    gap: 24px;
+  }
+
+  .result__add {
+    width: 50%;
+  }
+}
+
+/* 手機：輸入框與按鈕上下排列、各自滿寬；加入收藏按鈕滿寬 */
+@media (max-width: 767px) {
+  .search {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .result__add {
+    width: 100%;
+  }
+}
+</style>
+```
+
+**白話解釋**
+
+**畫面狀態**：整個首頁只靠 5 個 `ref` 決定要顯示什麼。
+| 變數 | 意思 | 影響畫面 |
+|---|---|---|
+| `isbnInput` | 輸入框內容 | 保留使用者輸入的原樣（DESIGN 規定錯誤時輸入框要保留） |
+| `book` | 查到的書 | 有值 → 顯示結果卡片 |
+| `errorMessage` | 錯誤訊息 | 有值 → 顯示錯誤框 |
+| `searching` | 查詢中 | 按鈕變「查詢中...」並停用；不顯示空狀態框 |
+| `adding` | 加入收藏中 | 按鈕停用，避免連按送出兩次 |
+
+**三種狀態的切換**（`<template>` 裡的 `v-if` 鏈）：
+```
+errorMessage 有值？ → 錯誤框 (c)
+否則 book 有值？    → 結果卡片 (b)
+否則不在查詢中？    → 空狀態框 (a)
+（查詢中：三個都不顯示）
+```
+
+**`search()` 的流程**
+1. `trim()` 去除前後空白。
+2. 清掉上一次的結果與錯誤，避免新舊畫面混在一起。
+3. 前端驗證：不合格就顯示錯誤，`return` 結束，**不呼叫 API**。
+4. `searching = true`，按鈕變「查詢中...」。
+5. `await api.get(...)` 等後端回應。
+6. 成功 → `book` 放資料；失敗 → `errorMessage` 放後端回傳的訊息（找不到此書籍、查詢失敗，請稍後再試…）。
+
+**`addFavorite()` 的流程**
+| 情況 | 處理 | 對應 |
+|---|---|---|
+| 畫面上是未登入（`auth.user` 是 null） | 警告 Toast「請先登入或註冊會員以使用收藏功能」＋ `router.push('/login')` | BDD Scenario |
+| 201 成功 | 成功 Toast，顯示後端的「已成功加入收藏」 | BDD Scenario |
+| 409 重複 | 警告 Toast，顯示後端的「此書籍已在收藏清單中，請勿重複收藏」 | BDD Scenario（BDD 寫的是「警告訊息」，所以用 warning 樣式） |
+| 401 | 畫面以為有登入，其實 Session 已失效：`setLoggedOut()` 後，跟未登入一樣處理 | 計畫階段的預設決定 |
+| 其他錯誤 | 錯誤 Toast | — |
+
+- `router.push('/login')`：用程式換頁，效果和點 `RouterLink` 一樣。
+- `orDash()`：Google Books 偶爾沒有作者或出版日期，這時顯示「—」，不會只留一個冒號。
+
+**樣式重點**
+- 查詢列用 `display: flex`，輸入框 `flex: 7`、按鈕 `flex: 3`，比例約 70%：30%。
+- `align-items: flex-end`：輸入框上方有標籤，按鈕對齊輸入框的**底部**才會跟輸入框同高。
+- 「+ 加入收藏」寬度：桌機 35%、平板 50%、手機 100%（DESIGN.md 3.1）。
+- `.result__add` 的 `margin-top: 24px`：線稿中 ISBN 行和按鈕太近，DESIGN.md 要求至少 16px。
+- 手機版：`flex-direction: column` 讓輸入框和按鈕上下排列，`align-items: stretch` 讓兩者都滿寬。
+
+### 對應的 Scenario
+
+| BDD Scenario | 狀態 | 說明 |
+|---|---|---|
+| 成功查詢到存在的書籍資訊 | ✅ 前後端通過 | 顯示書名、作者、出版日期與「加入收藏」按鈕 |
+| 本機沒有但 Google Books 有收錄的書籍 | 🔸 後端以 Mock 通過；畫面沿用同一個結果卡片 | 實測當天 Google 回 429，無法用真實資料測 |
+| 本機沒有且 Google Books 無法連線時顯示錯誤 | ✅ 前後端通過 | Google 額度用完（429）剛好就是真實的「無法使用」情境，畫面顯示「查詢失敗，請稍後再試」 |
+| 無效或不存在的 ISBN：9780000000000 | 🔸 後端以 Mock 通過 | 真實環境下 Google 回 429，所以畫面顯示的是「查詢失敗，請稍後再試」；Google 恢復後應顯示「找不到此書籍」 |
+| 無效或不存在的 ISBN：INVALID_ISBN | ✅ 前後端通過 | 前端直接擋下，沒有呼叫 API |
+| 無效或不存在的 ISBN：978986134372 | ✅ 前後端通過 | 同上 |
+| 無效或不存在的 ISBN：空白 | ✅ 前端通過 | 前端直接顯示「請輸入 ISBN 碼」 |
+| 未登入狀態下點擊「加入收藏」需引導至登入/註冊 | ✅ 前端通過 | Toast＋導向 /login |
+| 已登入會員成功將書籍加入個人收藏 | ✅ 前後端通過 | Toast「已成功加入收藏」 |
+| 已登入會員重複收藏書籍時跳出提示 | ✅ 前後端通過 | 警告 Toast，收藏數量維持 1 |
+
+### 怎麼驗證成功
+
+啟動後端和前端（見步驟 6），打開 <http://localhost:5173>。
+
+**瀏覽器實測（2026-10-16，桌機 1280px）**
+
+| # | 操作 | 結果 |
+|---|---|---|
+| 1 | 打開首頁 | 虛線框「請在上方輸入 ISBN 碼並點擊「查詢」以檢視書籍詳細資訊」 ✅ |
+| 2 | 輸入 `9789861343722` 按 Enter | 結果卡片：書名（粗體）、作者、出版日期、ISBN（淺色）、「+ 加入收藏」；ISBN 行和按鈕相距 24px ✅ |
+| 3 | 輸入 `INVALID_ISBN` 查詢 | 錯誤框「⚠ 錯誤提示：ISBN 碼格式錯誤或無效」，輸入框保留原文 ✅ |
+| 4 | 輸入 `978986134372` 查詢 | 同上 ✅ |
+| 5 | 只輸入空白查詢 | 「⚠ 錯誤提示：請輸入 ISBN 碼」 ✅ |
+| 6 | 第 3～5 步的網路紀錄 | 開發者工具 Network 分頁**沒有**出現 `/api/books` 請求（前端擋下） ✅ |
+| 7 | 輸入本機沒有的 `9780306406157` | 等待 Google 時按鈕顯示「查詢中...」且無法點擊；之後顯示「查詢失敗，請稍後再試」（Google 回 429） ✅ |
+| 8 | 未登入，查詢後點「+ 加入收藏」 | 警告 Toast「請先登入或註冊會員以使用收藏功能」，導向 `/login` ✅ |
+| 9 | 登入 Cooqle，查詢後點「+ 加入收藏」 | Toast「已成功加入收藏」 ✅ |
+| 10 | 再點一次 | 警告 Toast「此書籍已在收藏清單中，請勿重複收藏」，收藏數量仍是 1 ✅ |
+| 11 | 頁面停留期間 Session 失效，再點「+ 加入收藏」 | Toast「請先登入或註冊會員以使用收藏功能」，導向 `/login`，導覽列變回「登入 / 註冊」 ✅ |
+
+> 第 9 步的登入，在登入頁完成前（步驟 8）用 Console 執行步驟 6 提供的 fetch 指令。實測加入的收藏已刪除。
+
+**RWD 檢查**
+
+| 寬度 | 結果 |
+|---|---|
+| 1280px | 輸入框約 70%＋按鈕約 30% 同一列；加入收藏按鈕約卡片 35%；卡片內距 48px ✅ |
+| 768px | 同一列；加入收藏按鈕 = 卡片內容寬 50%；卡片內距 32px ✅ |
+| 375px | 輸入框與「查詢」上下排列且都滿寬；加入收藏按鈕滿寬；長書名自動換行；內文 16px、標題 24px；沒有水平捲軸 ✅ |
+
+---
+
+## 步驟 8：登入 / 註冊頁
+
+### 目標
+完成 `/login`（DESIGN.md 5.2）：
+- 窄卡片裡放「暱稱」「手機號碼」兩個輸入框，以及滿版的「登入 / 註冊」按鈕。
+- 前端先驗證（規則和順序都和後端相同），錯誤用 Toast（錯誤樣式）顯示。
+- 成功：更新登入狀態 → Toast「登入成功」→ 跳轉首頁。
+
+### 建立或修改的檔案
+```
+frontend/src/
+├── validators.js        修改：加上 validateLogin
+└── views/LoginView.vue  修改：完成登入頁
+```
+
+### 8-1 validators.js（修改後全文）
+
+**`frontend/src/validators.js`**
+
+```js
+// 前端欄位驗證：規則與後端相同（後端仍會再驗證一次，前端驗證只是讓使用者更快看到提示）。
+// 每個函式回傳「錯誤訊息」；沒有錯誤時回傳空字串 ''。
+
+import { MESSAGES } from '@/messages'
+
+/** ISBN：去除前後空白後，必須是 13 碼數字 */
+export function validateIsbn(isbn) {
+  if (isbn === '') {
+    return MESSAGES.ISBN_REQUIRED
+  }
+  if (!/^[0-9]{13}$/.test(isbn)) {
+    return MESSAGES.ISBN_INVALID
+  }
+  return ''
+}
+
+/**
+ * 登入/註冊（傳入已去除前後空白的值）。
+ * 檢查順序與後端相同：暱稱空白 → 手機空白 → 暱稱格式 → 暱稱長度 → 手機格式
+ */
+export function validateLogin(nickname, mobile) {
+  if (nickname === '') {
+    return MESSAGES.NICKNAME_REQUIRED
+  }
+  if (mobile === '') {
+    return MESSAGES.MOBILE_REQUIRED
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(nickname)) {
+    return MESSAGES.NICKNAME_INVALID
+  }
+  if (nickname.length > 20) {
+    return MESSAGES.NICKNAME_TOO_LONG
+  }
+  if (!/^[0-9]{10}$/.test(mobile)) {
+    return MESSAGES.MOBILE_INVALID
+  }
+  return ''
+}
+```
+
+**白話解釋**
+- 檢查順序和後端 `UserService.validate()` **完全一樣**：暱稱空白 → 手機空白 → 暱稱格式 → 暱稱長度 → 手機格式。前後端順序一致，同樣的輸入不管被哪一邊擋下，看到的都是同一則訊息。
+- 傳進來的值已經在頁面裡 `trim()` 過，所以這裡直接判斷 `=== ''`。
+- `/^[A-Za-z0-9_-]+$/`：和後端 `NICKNAME_PATTERN` 相同（說明見步驟 4-4）。
+- 「暱稱與手機號碼不符」「此暱稱已被使用」需要查資料庫，前端沒辦法判斷，只能由後端回傳。
+
+### 8-2 登入頁：LoginView.vue
+
+**`frontend/src/views/LoginView.vue`**
+
+```vue
+<!--
+  登入 / 註冊 /login（DESIGN.md 5.2）：登入與註冊合一，只要暱稱＋手機。
+  錯誤訊息一律用 Toast（錯誤樣式）顯示。
+-->
+<script setup>
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import PageTitle from '@/components/PageTitle.vue'
+import BaseCard from '@/components/BaseCard.vue'
+import BaseInput from '@/components/BaseInput.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import { api } from '@/api'
+import { setLoggedIn } from '@/auth'
+import { showToast } from '@/toast'
+import { validateLogin } from '@/validators'
+
+const router = useRouter()
+
+const nickname = ref('')
+const mobile = ref('')
+const submitting = ref(false) // 送出中：按鈕暫時停用，避免連按
+
+/** 按下「登入 / 註冊」 */
+async function submit() {
+  const trimmedNickname = nickname.value.trim()
+  const trimmedMobile = mobile.value.trim()
+
+  // 前端先驗證（規則與後端相同）
+  const invalid = validateLogin(trimmedNickname, trimmedMobile)
+  if (invalid) {
+    showToast(invalid, 'error')
+    return
+  }
+
+  submitting.value = true
+  const result = await api.post('/api/auth/login', { nickname: trimmedNickname, mobile: trimmedMobile })
+  submitting.value = false
+
+  if (result.ok) {
+    setLoggedIn(result.data) // 導覽列馬上變成「暱稱 (個人頁)」
+    showToast(result.data.message) // 登入成功（新註冊也是這句）
+    router.push('/')
+  } else {
+    // 暱稱與手機號碼不符、此暱稱已被使用…都顯示後端的訊息
+    showToast(result.data.message, 'error')
+  }
+}
+</script>
+
+<template>
+  <div class="page page--narrow">
+    <PageTitle title="會員 登入 / 註冊" />
+
+    <BaseCard>
+      <form class="login-form" @submit.prevent="submit">
+        <BaseInput v-model="nickname" label="暱稱 (Nickname)" placeholder="例如：Cooqle" autocomplete="nickname" />
+        <BaseInput
+          v-model="mobile"
+          label="手機號碼 (Mobile)"
+          placeholder="例如：0900123456"
+          type="tel"
+          inputmode="numeric"
+          autocomplete="tel"
+        />
+        <BaseButton type="submit" class="login-form__submit" block spaced :disabled="submitting">
+          登入 / 註冊
+        </BaseButton>
+      </form>
+    </BaseCard>
+  </div>
+</template>
+
+<style scoped>
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding: 8px 40px;
+}
+
+.login-form__submit {
+  margin-top: 16px;
+}
+
+/* 平板以下：卡片本身的內距已經變小，表單不再額外內縮 */
+@media (max-width: 1023px) {
+  .login-form {
+    padding: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .login-form {
+    gap: 24px;
+  }
+
+  .login-form__submit {
+    margin-top: 8px;
+  }
+}
+</style>
+```
+
+**白話解釋**
+- **`submit()` 的流程**
+  1. `trim()` 去除前後空白（計畫階段 Q4）。
+  2. 前端驗證，有錯就跳錯誤 Toast，`return` 結束，不呼叫 API。
+  3. 呼叫 `POST /api/auth/login`。送出的是 trim 過的值。
+  4. 成功：
+     - `setLoggedIn(result.data)`：更新全站共用的 `auth.user`，導覽列**立刻**變成「Cooqle (個人頁)」，不用重新整理。
+     - Toast 顯示後端的「登入成功」。全新暱稱自動註冊時，後端回的也是同一句（設計決策 11）。
+     - `router.push('/')` 跳轉首頁。
+  5. 失敗：錯誤 Toast 顯示後端的訊息。
+- **`type="tel"` ＋ `inputmode="numeric"`**：手機號碼欄位在手機上會跳出數字鍵盤。用 `tel` 而不是 `number`，因為 `number` 會把開頭的 0 吃掉，還會出現上下調整的小箭頭。
+- **`autocomplete`**：讓瀏覽器可以記住、自動填入暱稱和手機。
+- **刻意沒有設定 `maxlength="20"`**：設了的話，使用者根本打不出第 21 個字，就看不到 BDD 規定的「暱稱長度不可超過 20 個字元」提示。
+- **樣式**：`.login-form` 用 `flex-direction: column` ＋ `gap` 讓欄位上下排列、間距一致。桌機時表單左右再內縮 40px，看起來比較接近線稿（輸入框比卡片窄一圈）。
+
+### 對應的 Scenario
+
+| BDD Scenario | 狀態 | 說明 |
+|---|---|---|
+| 使用暱稱與手機號碼成功登入 | ✅ 前後端通過 | Toast「登入成功」→ 跳轉首頁 |
+| 暱稱大小寫視為相同，可登入同一個帳號 | ✅ 前後端通過 | 輸入 `cooqle`，導覽列顯示原樣 `Cooqle` |
+| 使用全新暱稱與手機號碼自動完成註冊並登入 | ✅ 後端通過；🔸 畫面流程與登入完全相同 | 實測時為了不在你的 MySQL 留下測試帳號，沒有在畫面上實際註冊；列入手動測試清單 |
+| 登入/註冊時輸入無效資料（7 組） | ✅ 前後端通過 | 7 組都由前端擋下並顯示正確訊息，沒有呼叫 API |
+| 手機號碼已註冊但暱稱不同 | ✅ 前後端通過 | 錯誤 Toast「暱稱與手機號碼不符」，維持未登入 |
+| 手機號碼是新的但暱稱已被使用 | ✅ 前後端通過 | 錯誤 Toast「此暱稱已被使用」，維持未登入 |
+
+### 怎麼驗證成功
+
+**瀏覽器實測（2026-10-16）**
+
+| # | 輸入（暱稱 / 手機） | 結果 |
+|---|---|---|
+| 1 | （空白） / 0900123456 | 錯誤 Toast「請輸入暱稱」，停在 `/login` ✅ |
+| 2 | Cooqle / （空白） | 「請輸入手機號碼」 ✅ |
+| 3 | Cooqle / 12345 | 「請輸入有效的手機號碼格式 (10碼)」 ✅ |
+| 4 | 小明 / 0900123456 | 「暱稱僅限英文、數字、- 與 _」 ✅ |
+| 5 | Coo qle / 0900123456 | 「暱稱僅限英文、數字、- 與 _」 ✅ |
+| 6 | Cooqle! / 0900123456 | 「暱稱僅限英文、數字、- 與 _」 ✅ |
+| 7 | ThisNicknameIsWayTooLong123 / 0900123456 | 「暱稱長度不可超過 20 個字元」 ✅ |
+| — | 第 1～7 步的網路紀錄 | 沒有任何 `/api/auth/login` 請求（全部由前端擋下） ✅ |
+| 8 | Another_One / 0900123456 | 錯誤 Toast「暱稱與手機號碼不符」（後端回 409），`/api/auth/me` 仍是 401 ✅ |
+| 9 | COOQLE / 0955000111 | 錯誤 Toast「此暱稱已被使用」（後端回 409） ✅ |
+| 10 | cooqle / 0900123456 | 成功 Toast「登入成功」→ 跳到首頁，導覽列「Cooqle (個人頁)」 ✅ |
+
+**RWD 檢查**
+
+| 寬度 | 結果 |
+|---|---|
+| 1280px | 卡片寬 720px 置中，與線稿 `login.png` 一致 ✅ |
+| 768px | 卡片寬 720px（左右各留 24px），卡片內距 32px ✅ |
+| 375px | 卡片滿寬（左右各留 16px），內距 24px；輸入框與按鈕高 48px；沒有水平捲軸 ✅ |
+
+> 從這一步開始就可以直接用登入頁登入，不需要再用 Console 的 fetch 指令。
+
+---
+
+<!-- 步驟 9 之後的內容會在完成時陸續補上 -->
 
 ## 如何快速上手
 
