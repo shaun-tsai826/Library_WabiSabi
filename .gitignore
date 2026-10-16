@@ -1,0 +1,19 @@
+# ===== 後端（Spring Boot / Maven / Eclipse）=====
+backend/target/
+backend/.classpath
+backend/.project
+backend/.settings/
+backend/.factorypath
+backend/.apt_generated/
+# 資料庫帳號密碼：只放在自己電腦，絕對不能進 git
+backend/src/main/resources/application-local.properties
+
+# ===== 前端（Vue / Vite）=====
+frontend/node_modules/
+frontend/dist/
+
+# ===== 作業系統與編輯器 =====
+.DS_Store
+.idea/
+.vscode/
+*.log

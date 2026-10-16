@@ -1,0 +1,9 @@
+# 使用方式：
+# 1. 複製這個檔案，改名為 application-local.properties（放在同一個資料夾）
+# 2. 填入你自己的資料庫連線資訊
+# 3. application-local.properties 已列在 .gitignore，不會被提交到 git
+#
+# 網址範例：jdbc:mysql://localhost:3306/library?serverTimezone=Asia/Taipei
+spring.datasource.url=
+spring.datasource.username=
+spring.datasource.password=
