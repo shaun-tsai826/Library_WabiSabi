@@ -22,6 +22,10 @@ export const MESSAGES = {
   /** 未登入進入個人頁 /profile */
   PROFILE_PAGE_LOGIN_REQUIRED: '請先註冊/登入',
 
+  // ===== 登出 =====
+  /** 登出時 Session 早已失效（API 回 401），前端仍當作登出成功（與後端 LOGOUT_SUCCESS 相同） */
+  LOGOUT_SUCCESS: '已成功登出',
+
   // ===== 收藏 =====
   /** 刪除前的確認視窗文字（DESIGN.md 4.9） */
   DELETE_CONFIRM: '確定要移除這本書的收藏嗎？',

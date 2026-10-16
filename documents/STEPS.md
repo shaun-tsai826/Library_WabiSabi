@@ -19,7 +19,8 @@
 - [步驟 7：首頁（查詢、錯誤提示、加入收藏）](#步驟-7首頁查詢錯誤提示加入收藏)
 - [步驟 8：登入 / 註冊頁](#步驟-8登入--註冊頁)
 - [步驟 9：收藏頁（清單、刪除、Session 失效備用畫面）](#步驟-9收藏頁清單刪除session-失效備用畫面)
-- 步驟 10～11：（完成後陸續補上）
+- [步驟 10：個人頁與登出](#步驟-10個人頁與登出)
+- 步驟 11：（完成後補上）
 - 如何快速上手：（全部完成後補上）
 
 ---
@@ -6045,7 +6046,248 @@ BDD 規定未登入進入收藏頁時，要「跳出提示並自動導向登入�
 
 ---
 
-<!-- 步驟 10 之後的內容會在完成時陸續補上 -->
+## 步驟 10：個人頁與登出
+
+### 目標
+完成 `/profile`（DESIGN.md 5.4）：
+- 窄卡片：置中粗體「會員基本資料」＋分隔線，兩欄顯示「會員暱稱：」「手機號碼：」。
+- 全寬危險按鈕「登出帳號」：清除 Session → Toast「已成功登出」→ 回首頁。
+- 寬度 < 360px 時，標籤與內容改成上下排列（DESIGN.md 3.1）。
+
+### 名詞先解釋
+- **`<dl>` / `<dt>` / `<dd>`**：HTML 的「描述清單」。`dt` 是名稱（會員暱稱：），`dd` 是內容（Cooqle）。這種「標籤：內容」的資料用它最合適，螢幕報讀軟體也會念出兩者的對應關係。
+- **CSS Grid（格線排版）**：把區塊切成欄與列的排版方式。`grid-template-columns: max-content 1fr` 代表兩欄：左欄寬度剛好容納最長的標籤，右欄佔滿剩下的空間。
+
+### 建立或修改的檔案
+```
+frontend/src/
+├── messages.js            修改：加上 LOGOUT_SUCCESS
+└── views/ProfileView.vue  修改：完成個人頁
+```
+
+### 10-1 messages.js（修改後全文）
+
+**`frontend/src/messages.js`**
+
+```js
+// 前端用到的提示訊息（文字來自 BDD.md），集中在這裡管理。
+// API 的結果訊息（登入成功、已成功加入收藏…）由後端回傳，前端直接顯示 response 的 message，不寫在這裡。
+// 這裡只放「前端自己判斷、自己顯示」的訊息；前端欄位驗證的文字與後端 Messages.java 相同。
+
+export const MESSAGES = {
+  // ===== 書籍查詢（前端驗證） =====
+  ISBN_REQUIRED: '請輸入 ISBN 碼',
+  ISBN_INVALID: 'ISBN 碼格式錯誤或無效',
+
+  // ===== 登入 / 註冊（前端驗證） =====
+  NICKNAME_REQUIRED: '請輸入暱稱',
+  MOBILE_REQUIRED: '請輸入手機號碼',
+  NICKNAME_INVALID: '暱稱僅限英文、數字、- 與 _',
+  NICKNAME_TOO_LONG: '暱稱長度不可超過 20 個字元',
+  MOBILE_INVALID: '請輸入有效的手機號碼格式 (10碼)',
+
+  // ===== 未登入的提示 =====
+  /** 未登入點「加入收藏」 */
+  FAVORITE_LOGIN_REQUIRED: '請先登入或註冊會員以使用收藏功能',
+  /** 未登入進入收藏頁 /favorites */
+  FAVORITES_PAGE_LOGIN_REQUIRED: '請先登入後再檢視收藏內容',
+  /** 未登入進入個人頁 /profile */
+  PROFILE_PAGE_LOGIN_REQUIRED: '請先註冊/登入',
+
+  // ===== 登出 =====
+  /** 登出時 Session 早已失效（API 回 401），前端仍當作登出成功（與後端 LOGOUT_SUCCESS 相同） */
+  LOGOUT_SUCCESS: '已成功登出',
+
+  // ===== 收藏 =====
+  /** 刪除前的確認視窗文字（DESIGN.md 4.9） */
+  DELETE_CONFIRM: '確定要移除這本書的收藏嗎？',
+
+  // ===== 通用 =====
+  /** 連不上後端、或後端回應看不懂時（與後端的 SERVER_ERROR 相同） */
+  SERVER_ERROR: '系統發生錯誤，請稍後再試',
+}
+```
+
+**白話解釋**
+- 新增的 `LOGOUT_SUCCESS` 是唯一一則「API 結果訊息」也放在前端的例外：登出時如果 Session 早已失效，後端回 401，不會給「已成功登出」這句。但對使用者來說他確實已經登出了，所以前端自己顯示這句（計畫階段的預設決定）。
+
+### 10-2 個人頁：ProfileView.vue
+
+**`frontend/src/views/ProfileView.vue`**
+
+```vue
+<!--
+  個人頁 /profile（DESIGN.md 5.4）：需要登入（路由守衛把關）。
+  顯示會員暱稱、手機號碼，以及「登出帳號」按鈕。
+-->
+<script setup>
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import PageTitle from '@/components/PageTitle.vue'
+import BaseCard from '@/components/BaseCard.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import { api } from '@/api'
+import { auth, setLoggedOut } from '@/auth'
+import { showToast } from '@/toast'
+import { MESSAGES } from '@/messages'
+
+const router = useRouter()
+const loggingOut = ref(false)
+
+/** 按下「登出帳號」 */
+async function logout() {
+  loggingOut.value = true
+  const result = await api.post('/api/auth/logout')
+  loggingOut.value = false
+
+  // 成功（200）或 Session 早就失效（401），對使用者來說結果都一樣：已經登出了
+  if (result.ok || result.status === 401) {
+    setLoggedOut() // 導覽列變回「登入 / 註冊」
+    showToast(result.ok ? result.data.message : MESSAGES.LOGOUT_SUCCESS) // 已成功登出
+    router.push('/')
+  } else {
+    showToast(result.data.message, 'error')
+  }
+}
+</script>
+
+<template>
+  <div class="page page--narrow">
+    <PageTitle title="個人資訊" />
+
+    <!-- 路由守衛保證進得來就一定有 auth.user；v-if 是多一層保險 -->
+    <BaseCard v-if="auth.user">
+      <h2 class="profile__heading">會員基本資料</h2>
+
+      <!-- dl / dt / dd：HTML 的「名稱—內容」清單，剛好對應「標籤：內容」兩欄 -->
+      <dl class="profile__info">
+        <dt>會員暱稱：</dt>
+        <dd class="profile__nickname">{{ auth.user.nickname }}</dd>
+        <dt>手機號碼：</dt>
+        <dd>{{ auth.user.mobile }}</dd>
+      </dl>
+
+      <BaseButton variant="danger" block spaced :disabled="loggingOut" @click="logout">登出帳號</BaseButton>
+    </BaseCard>
+  </div>
+</template>
+
+<style scoped>
+/* 置中粗體「會員基本資料」，下方一條分隔線 */
+.profile__heading {
+  margin: 0 0 32px;
+  padding-bottom: 28px;
+  border-bottom: var(--line) solid var(--color-border);
+  font-size: 1.15em;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* 兩欄：左邊標籤（次要色）、右邊內容 */
+.profile__info {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 32px 72px;
+  margin: 0 0 40px;
+  padding: 0 48px;
+}
+
+.profile__info dt {
+  color: var(--color-text-muted);
+}
+
+.profile__info dd {
+  margin: 0;
+  min-width: 0; /* 長暱稱可以換行 */
+}
+
+.profile__nickname {
+  font-weight: 700;
+}
+
+@media (max-width: 1023px) {
+  .profile__info {
+    gap: 24px 40px;
+    padding: 0 16px;
+  }
+}
+
+@media (max-width: 767px) {
+  .profile__heading {
+    margin-bottom: 24px;
+    padding-bottom: 20px;
+  }
+
+  .profile__info {
+    gap: 20px 24px;
+    margin-bottom: 32px;
+    padding: 0;
+  }
+}
+
+/* 極窄螢幕（< 360px）：標籤與內容改成上下排列 */
+@media (max-width: 359px) {
+  .profile__info {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .profile__info dd {
+    margin-bottom: 16px;
+  }
+}
+</style>
+```
+
+**白話解釋**
+- **資料從哪來？** 直接用 `auth.user`。打開網頁時 `GET /api/auth/me`（步驟 6）或登入成功時（步驟 8）就已經拿到暱稱和手機了，不用再呼叫一次 API。
+- **為什麼還要 `v-if="auth.user"`？** 路由守衛保證沒登入進不來。但按下登出後，`auth.user` 會先變成 null，接著才換頁。這一瞬間如果沒有 `v-if`，畫面會嘗試讀 `null.nickname` 而出錯。
+- **`logout()` 的流程**
+  1. 呼叫 `POST /api/auth/logout`，後端執行 `session.invalidate()`。
+  2. 成功（200）或 Session 早已失效（401）都當作登出成功：
+     - `setLoggedOut()`：導覽列變回「登入 / 註冊」。
+     - Toast「已成功登出」：200 時用後端回傳的訊息，401 時用前端的 `MESSAGES.LOGOUT_SUCCESS`。
+     - `router.push('/')` 回首頁。
+  3. 其他錯誤（例如後端沒開）：錯誤 Toast，留在個人頁，維持登入狀態。
+- **登出後還能看到收藏嗎？** 不能。後端的 Session 已作廢，前端的 `auth.user` 也清空了，再點「我的收藏」會被路由守衛擋下；就算直接呼叫 API，攔截器也會回 401。
+- **樣式重點**
+  - `.profile__heading` 的 `border-bottom`：「會員基本資料」下方的 1.5px 分隔線。
+  - `gap: 32px 72px`：列與列之間 32px、欄與欄之間 72px。
+  - `@media (max-width: 359px)`：改成 `grid-template-columns: 1fr`（只剩一欄），標籤和內容就變成上下排列。
+
+### 對應的 Scenario
+
+| BDD Scenario | 狀態 | 說明 |
+|---|---|---|
+| 在個人頁面檢視個人資訊 | ✅ 前後端通過 | 會員暱稱 Cooqle、手機號碼 0900123456，以及「登出帳號」按鈕 |
+| 未登入使用者嘗試訪問個人頁面被拒絕 | ✅（步驟 6 的路由守衛） | |
+| 在個人頁面登出後無法再查看收藏內容 | ✅ 前後端通過 | 登出 → 「已成功登出」→ 回首頁 → 點「我的收藏」被導向登入頁，看不到任何收藏 |
+
+**到這一步，BDD.md 所有 Scenario 都已實作完成。** 步驟 11 會整理手動測試清單，並寫「如何快速上手」。
+
+### 怎麼驗證成功
+
+**瀏覽器實測（2026-10-16）**
+
+| # | 操作 | 結果 |
+|---|---|---|
+| 1 | 登入 Cooqle → 點導覽列「Cooqle (個人頁)」 | 顯示「會員基本資料」、會員暱稱 **Cooqle**、手機號碼 0900123456、「登出帳號」；導覽列第三項為粗體；與線稿 `profile.png` 一致 ✅ |
+| 2 | 點「登出帳號」 | 成功 Toast「已成功登出」→ 回首頁；導覽列變回「登入 / 註冊」；`/api/auth/me` 回 401（Session 已清除） ✅ |
+| 3 | 接著點「我的收藏」 | 被導向 `/login`，Toast「請先登入後再檢視收藏內容」，看不到任何收藏 ✅ |
+| 4 | 登入後進個人頁，讓 Session 先失效，再點「登出帳號」 | 依然顯示「已成功登出」並回首頁 ✅ |
+
+**RWD 檢查**
+
+| 寬度 | 結果 |
+|---|---|
+| 1280px | 窄卡片 720px 置中，兩欄排列 ✅ |
+| 768px | 兩欄排列 ✅ |
+| 375px | 兩欄排列；「登出帳號」高 48px；沒有水平捲軸 ✅ |
+| 340px（< 360px） | 標籤與內容上下排列；沒有水平捲軸 ✅ |
+
+---
+
+<!-- 步驟 11 之後的內容會在完成時陸續補上 -->
 
 ## 如何快速上手
 
