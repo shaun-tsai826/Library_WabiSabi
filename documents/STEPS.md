@@ -15,7 +15,8 @@
 - [步驟 3：查書 API、Google Books 與全域例外處理](#步驟-3查書-apigoogle-books-與全域例外處理)
 - [步驟 4：登入/註冊、Session 與攔截器](#步驟-4登入註冊session-與攔截器)
 - [步驟 5：收藏 API（加入、清單、刪除）](#步驟-5收藏-api加入清單刪除)
-- 步驟 6～11：（完成後陸續補上）
+- [步驟 6：建立前端專案、共用元件與路由守衛](#步驟-6建立前端專案共用元件與路由守衛)
+- 步驟 7～11：（完成後陸續補上）
 - 如何快速上手：（全部完成後補上）
 
 ---
@@ -3867,7 +3868,1261 @@ curl -c cookies.txt -b cookies.txt -X DELETE http://localhost:8080/api/favorites
 
 ---
 
-<!-- 步驟 6 之後的內容會在完成時陸續補上 -->
+## 步驟 6：建立前端專案、共用元件與路由守衛
+
+### 目標
+1. 用 create-vue 建立 Vue 3 專案，設定 Vite proxy，把 `/api` 轉給後端。
+2. 依 DESIGN.md 第 2 節寫好 CSS 變數，依 3.1 節寫好 RWD 斷點。
+3. 寫好全站共用的小工具：提示訊息、呼叫 API、登入狀態、Toast。
+4. 做出可重用元件：導覽列、標題、卡片、輸入框、按鈕、錯誤框、空狀態框、Toast。
+5. 設定 4 個路由與**路由守衛**：未登入進 `/favorites`、`/profile` 時提示並導向 `/login`。
+
+這一步的 4 個頁面先放「只有標題」的暫時版本，步驟 7～10 再一頁一頁完成。
+
+### 版本資訊（2026-10-16 建立時）
+| 套件 | 版本 | 說明 |
+|---|---|---|
+| create-vue | 3.24.0 | 建立專案的工具 |
+| Vue | 3.5 | |
+| Vue Router | **5.3** | ⚠️ 網路教學多為 4.x。本專案用到的寫法（`createRouter`、`createWebHistory`、`beforeEach`、`RouterLink`、`RouterView`）在 5.x 都一樣。舊教學的守衛常寫 `next()`，新版建議改成**直接 return**（見 6-7） |
+| Vite | 8 | 開發伺服器與打包工具 |
+| Node.js | 24（需 22.18 以上或 24.12 以上） | |
+
+### 名詞先解釋
+- **Vue**：用「元件」組網頁的框架。一個 `.vue` 檔就是一個元件，裡面有三塊：`<script setup>`（程式）、`<template>`（HTML）、`<style scoped>`（CSS，只影響這個元件）。
+- **元件（Component）**：網頁的「樂高積木」。按鈕寫一次，每一頁都能拿來用；要改樣式只改一個地方。
+- **Props**：父元件傳給子元件的設定。例如 `<BaseButton variant="danger">` 的 `variant`。
+- **Slot（插槽）**：元件裡預留的「空位」，父元件把內容塞進去。例如 `<BaseButton>刪除</BaseButton>` 的「刪除」兩個字。
+- **reactive**：把普通物件變成「有變化就會通知畫面更新」的物件。比喻：**公布欄**，誰改了上面的內容，所有看著公布欄的人（元件）都會馬上看到。
+- **路由（Router）**：決定「哪個網址顯示哪一頁」。網址從 `/` 變 `/login` 時，不會重新載入整個網頁，只換掉中間的內容。
+- **路由守衛（Navigation Guard）**：每次換頁「之前」都會執行的檢查，就像前端的門口警衛。
+- **Vite proxy（轉接）**：見 6-2。
+- **CORS**：瀏覽器的安全規則，網頁（`localhost:5173`）預設不能隨便呼叫另一個網址（`localhost:8080`）的 API。用 proxy 讓兩者看起來是同一個網址，就不用處理這個問題。
+
+### 6-1 用 create-vue 建立專案
+
+在專案根目錄執行：
+```bash
+npx create-vue@3.24.0 --router --bare frontend
+```
+```bash
+cd frontend
+npm install
+```
+- `--router`：加入 Vue Router。沒有加的 `--ts`、`--jsx`、`--pinia`、`--vitest`、`--cypress`、`--playwright`、`--eslint` 就是不選（照提示詞的要求）。
+- `--bare`：不要範例程式（HelloWorld 那些），省得事後一個一個刪。
+- 建好後刪掉 `frontend/.gitignore`（根目錄已經有一份）和 `frontend/README.md`。
+- `frontend/.vscode/` 是 create-vue 附的 VS Code 建議設定，已被根目錄 `.gitignore` 排除，留著不影響。
+
+**根目錄 `.gitignore` 補上兩行**（Vite 暫存檔與個人環境變數檔）：
+```gitignore
+# Vite 偶爾產生的暫存檔、個人環境變數檔
+frontend/*.timestamp-*.mjs
+frontend/.env.local
+```
+
+**前端資料夾結構（這一步完成後）**
+```
+frontend/
+├── index.html                網頁入口
+├── vite.config.js            Vite 設定（含 proxy）
+├── package.json              套件清單
+└── src/
+    ├── main.js               程式進入點
+    ├── App.vue               整個網站的外框
+    ├── messages.js           提示訊息
+    ├── api.js                呼叫 API
+    ├── auth.js               登入狀態
+    ├── toast.js              Toast 狀態
+    ├── styles/base.css       CSS 變數與全域樣式
+    ├── router/index.js       路由與守衛
+    ├── components/           可重用元件（8 個）
+    └── views/                4 個頁面
+```
+
+### 6-2 Vite 設定：vite.config.js
+
+**`frontend/vite.config.js`**
+
+```js
+import { fileURLToPath, URL } from 'node:url'
+
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+import vueDevTools from 'vite-plugin-vue-devtools'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [
+    vue(),
+    vueDevTools(),
+  ],
+  resolve: {
+    alias: {
+      // 在 import 路徑寫 @ 代表 src 資料夾，例如 import AppToast from '@/components/AppToast.vue'
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
+  server: {
+    port: 5173,
+    // 開發時的「轉接」：瀏覽器打 http://localhost:5173/api/...，Vite 幫忙轉給後端 http://localhost:8080/api/...
+    // 對瀏覽器來說網頁和 API 是同一個網址，所以不用處理 CORS，Session Cookie 也能正常運作
+    proxy: {
+      '/api': 'http://localhost:8080',
+    },
+  },
+})
+```
+
+**白話解釋**
+- **proxy 比喻：總機轉接。** 瀏覽器只認識一個電話號碼 `localhost:5173`。打 `/api/...` 開頭的分機時，Vite 總機會幫你轉到後端 `localhost:8080`；其他號碼（網頁本身）就由 Vite 自己接。
+  ```
+  瀏覽器 ── GET localhost:5173/api/books/978... ──▶ Vite ── 轉接 ──▶ Spring Boot localhost:8080/api/books/978...
+  ```
+- 對瀏覽器來說，網頁和 API 都來自 `localhost:5173`，所以：
+  1. 不會碰到 CORS 限制。
+  2. 後端發的 Session Cookie（`JSESSIONID`）會記在 `localhost:5173` 底下，之後呼叫 API 時瀏覽器自動帶上，登入狀態才能維持。
+- 這個轉接**只在開發時**（`npm run dev`）有效。正式上線要另外設定，不在這次作業範圍。
+- `vueDevTools()`：create-vue 預設附的開發工具，畫面下方會出現一個小圖示，可以查看元件狀態。只在開發時出現。
+
+### 6-3 網頁入口：index.html
+
+**`frontend/index.html`**
+
+```html
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8">
+    <link rel="icon" href="/favicon.ico">
+    <!-- RWD 必備：讓手機用實際螢幕寬度顯示，而不是縮小的桌機版 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LIBRARY / 侘寂書閣</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
+```
+
+**白話解釋**
+- `lang="zh-Hant"`：告訴瀏覽器這是繁體中文網頁（影響字型選擇與螢幕報讀軟體）。
+- `<meta name="viewport" ...>`：**RWD 必備**。沒有這行，手機會把網頁當成 980px 寬的桌機版再縮小顯示，字小到看不清楚。create-vue 預設就有，這裡確認後保留。
+- `<div id="app">`：Vue 會把整個網站「掛」在這個 div 裡。
+
+### 6-4 CSS 變數與全域樣式：styles/base.css
+
+**`frontend/src/styles/base.css`**
+
+```css
+/*
+ * 全域樣式：顏色、尺寸的 CSS 變數（依 DESIGN.md 第 2 節），以及所有頁面共用的基本設定。
+ *
+ * RWD 斷點（DESIGN.md 3.1 節）：先寫桌機版，再用 @media (max-width: ...) 覆寫較窄的螢幕。
+ *   桌機：≥ 1024px（不用寫 @media，就是預設樣式）
+ *   平板：768px ～ 1023px  → @media (max-width: 1023px)
+ *   手機：< 768px          → @media (max-width: 767px)
+ *   極窄：< 360px          → @media (max-width: 359px)（只有個人頁資訊用到）
+ * 注意：CSS 變數不能用在 @media 的條件裡，所以斷點直接寫數字。
+ */
+
+:root {
+  /* ===== 顏色：規範指定色 ===== */
+  --color-bg: #F9F8F6;            /* 米白：頁面背景 */
+  --color-surface: #EAE6DF;       /* 暖灰：頂部導覽列、卡片背景 */
+  --color-text: #4A4643;          /* 炭灰：文字、主要按鈕背景 */
+  --color-border: #D3C9BF;        /* 大地淺棕：邊框、分隔線、虛線框 */
+
+  /* ===== 顏色：依線稿估算（約） ===== */
+  --color-text-muted: #7A7066;    /* 次要文字：標籤、作者與 ISBN 行 */
+  --color-btn-secondary: #8E8475; /* 次要按鈕：「+ 加入收藏」 */
+  --color-danger: #A96B6B;        /* 危險按鈕：「刪除」「登出帳號」 */
+  --color-danger-bg: #E8D7D7;     /* 錯誤/警示框背景 */
+  --color-danger-border: #C39A9A; /* 錯誤/警示框邊框 */
+  --color-danger-text: #7A2E2E;   /* 錯誤/警示框文字 */
+  --color-input-bg: #FFFFFF;      /* 輸入框背景 */
+
+  /* ===== 線條與圓角 ===== */
+  --line: 1.5px;
+  --radius-card: 12px;
+  --radius-input: 8px;
+  --radius-btn: 6px;
+
+  /* ===== 尺寸（會隨螢幕寬度在下方 @media 調整） ===== */
+  --page-gutter: 32px;            /* 頁面左右外距 */
+  --card-padding: 48px;           /* 卡片內距 */
+  --title-size: 32px;             /* 頁面標題字級 */
+  --title-underline: 220px;       /* 標題底線寬度 */
+  --text-size: 18px;              /* 內文字級 */
+  --wide-max: 1200px;             /* 寬容器（首頁、收藏頁）最大寬度 */
+  --narrow-max: 720px;            /* 窄卡片（登入、個人頁）最大寬度 */
+  --tap-min: 44px;                /* 可點擊區域最小高度 */
+
+  --font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+}
+
+/* 平板 */
+@media (max-width: 1023px) {
+  :root {
+    --page-gutter: 24px;
+    --card-padding: 32px;
+    --title-size: 28px;
+    --title-underline: 180px;
+  }
+}
+
+/* 手機 */
+@media (max-width: 767px) {
+  :root {
+    --page-gutter: 16px;
+    --card-padding: 24px;
+    --title-size: 24px;
+    --title-underline: 120px;
+    --text-size: 16px;
+  }
+}
+
+/* ===== 基本設定 ===== */
+
+/* 讓 width 包含 padding 與 border，計算寬度比較直覺 */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  overflow-x: hidden; /* 任何寬度都不出現水平捲軸 */
+}
+
+body {
+  min-width: 320px; /* 最小支援寬度 */
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  font-size: var(--text-size);
+  line-height: 1.6;
+}
+
+/* 長書名、長暱稱自動換行，不撐破版面 */
+h1,
+h2,
+h3,
+p,
+span,
+div {
+  overflow-wrap: anywhere;
+}
+
+button,
+input {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ===== 版面容器 ===== */
+
+/* 每一頁的外框：置中、左右留外距 */
+.page {
+  width: 100%;
+  margin: 0 auto;
+  padding: 48px var(--page-gutter) 64px;
+}
+
+/* 寬容器：首頁、收藏頁 */
+.page--wide {
+  max-width: calc(var(--wide-max) + var(--page-gutter) * 2);
+}
+
+/* 窄容器：登入、個人頁 */
+.page--narrow {
+  max-width: calc(var(--narrow-max) + var(--page-gutter) * 2);
+}
+
+@media (max-width: 767px) {
+  .page {
+    padding-top: 32px;
+    padding-bottom: 48px;
+  }
+}
+```
+
+**白話解釋**
+- **CSS 變數**：`--color-text: #4A4643;` 先取名字，之後用 `var(--color-text)` 引用。比喻：**調色盤上的格子**，元件只說「用 3 號格的顏色」，要換顏色時只改調色盤，所有元件一起變。所以元件裡**不會出現任何色碼**。
+- `:root`：整份網頁的最上層，定義在這裡的變數全站都能用。
+- **RWD 的寫法：在 `@media` 裡改變數的值**。例如手機版把 `--card-padding` 從 48px 改成 24px，所有用到 `var(--card-padding)` 的卡片就會自動跟著縮小，不用每個元件各寫一次 `@media`。
+- **為什麼斷點寫數字，不寫成變數？** CSS 規定 `@media (max-width: var(--xxx))` 是無效的，所以斷點直接寫 1023px、767px，並在檔案頂部用註解列出。
+- `box-sizing: border-box`：讓 `width: 100%` 包含內距和邊框，不會因為加了 padding 就超出畫面。這是 RWD 最常用的基本設定。
+- `overflow-x: hidden` ＋ `min-width: 320px`：任何寬度都不出現水平捲軸，最小支援 320px。
+- `overflow-wrap: anywhere`：超長的英文書名或暱稱會自動換行，不會撐破卡片。
+- `.page`、`.page--wide`、`.page--narrow`：每一頁最外層的容器。寬的最大 1200px（首頁、收藏頁），窄的最大 720px（登入、個人頁），左右一律保留外距。
+
+### 6-5 提示訊息：messages.js
+
+**`frontend/src/messages.js`**
+
+```js
+// 前端用到的提示訊息（文字來自 BDD.md），集中在這裡管理。
+// API 的結果訊息（登入成功、已成功加入收藏…）由後端回傳，前端直接顯示 response 的 message，不寫在這裡。
+// 這裡只放「前端自己判斷、自己顯示」的訊息；前端欄位驗證的文字與後端 Messages.java 相同。
+
+export const MESSAGES = {
+  // ===== 書籍查詢（前端驗證） =====
+  ISBN_REQUIRED: '請輸入 ISBN 碼',
+  ISBN_INVALID: 'ISBN 碼格式錯誤或無效',
+
+  // ===== 登入 / 註冊（前端驗證） =====
+  NICKNAME_REQUIRED: '請輸入暱稱',
+  MOBILE_REQUIRED: '請輸入手機號碼',
+  NICKNAME_INVALID: '暱稱僅限英文、數字、- 與 _',
+  NICKNAME_TOO_LONG: '暱稱長度不可超過 20 個字元',
+  MOBILE_INVALID: '請輸入有效的手機號碼格式 (10碼)',
+
+  // ===== 未登入的提示 =====
+  /** 未登入點「加入收藏」 */
+  FAVORITE_LOGIN_REQUIRED: '請先登入或註冊會員以使用收藏功能',
+  /** 未登入進入收藏頁 /favorites */
+  FAVORITES_PAGE_LOGIN_REQUIRED: '請先登入後再檢視收藏內容',
+  /** 未登入進入個人頁 /profile */
+  PROFILE_PAGE_LOGIN_REQUIRED: '請先註冊/登入',
+
+  // ===== 收藏 =====
+  /** 刪除前的確認視窗文字（DESIGN.md 4.9） */
+  DELETE_CONFIRM: '確定要移除這本書的收藏嗎？',
+
+  // ===== 通用 =====
+  /** 連不上後端、或後端回應看不懂時（與後端的 SERVER_ERROR 相同） */
+  SERVER_ERROR: '系統發生錯誤，請稍後再試',
+}
+```
+
+**白話解釋**
+- 跟後端的 `Messages.java` 一樣，前端的提示文字都集中在這裡，用法是 `MESSAGES.ISBN_REQUIRED`。
+- **分工（計畫階段 Q3 確認）**：
+  - API 的結果訊息（「登入成功」「此暱稱已被使用」「已成功加入收藏」…）由後端回傳，前端直接顯示 `result.data.message`，**不寫在這裡**。
+  - 這裡只放前端自己判斷的訊息：路由守衛、ISBN 空白、前端欄位驗證、刪除確認文字。
+  - 前端欄位驗證的文字和後端一模一樣（因為前後端都要驗證），這是唯一重複的地方，改的時候兩邊都要改。
+- `export const`：匯出，其他檔案才能 `import { MESSAGES } from '@/messages'` 拿來用。
+
+### 6-6 呼叫 API：api.js
+
+**`frontend/src/api.js`**
+
+```js
+// 呼叫後端 API 的小工具：用瀏覽器內建的 fetch，不用另外安裝 axios。
+//
+// 每次呼叫都回傳同樣格式的物件，頁面用起來很單純：
+//   { ok: true/false, status: HTTP 狀態碼, data: 後端回傳的 JSON }
+// 失敗時 data.message 一定有文字，可以直接拿去顯示。
+//
+// 用法：
+//   const result = await api.get('/api/books/9789861343722')
+//   if (result.ok) { ...result.data.title... } else { showToast(result.data.message, 'error') }
+
+import { MESSAGES } from '@/messages'
+
+async function request(method, url, body) {
+  const options = { method, headers: {} }
+  if (body !== undefined) {
+    options.headers['Content-Type'] = 'application/json'
+    options.body = JSON.stringify(body)
+  }
+
+  let response
+  try {
+    // 網頁和 API 同一個網址（Vite proxy），fetch 預設就會帶上 Session Cookie
+    response = await fetch(url, options)
+  } catch {
+    // 連不上（例如後端沒啟動、網路斷線）
+    return { ok: false, status: 0, data: { message: MESSAGES.SERVER_ERROR } }
+  }
+
+  // 讀取回應的 JSON；沒有內容或不是 JSON 時當作 null
+  let data = null
+  try {
+    data = await response.json()
+  } catch {
+    data = null
+  }
+
+  // 失敗卻沒有 message（例如 Vite 轉接時後端沒開）：補上通用訊息
+  if (!response.ok && !(data && data.message)) {
+    data = { message: MESSAGES.SERVER_ERROR }
+  }
+
+  return { ok: response.ok, status: response.status, data }
+}
+
+export const api = {
+  get: (url) => request('GET', url),
+  post: (url, body) => request('POST', url, body),
+  delete: (url) => request('DELETE', url),
+}
+```
+
+**白話解釋**
+- `fetch(url, options)`：瀏覽器內建的「送請求」功能，不用安裝 axios。
+- `async` / `await`：送請求要等網路回應，`await` 的意思是「在這裡等結果回來，再往下執行」，寫起來像一般的順序程式。
+- `JSON.stringify(body)`：把 JavaScript 物件轉成 JSON 字串送出；`response.json()` 則是把回應的 JSON 轉回物件。
+- **統一回傳 `{ ok, status, data }`**：每一頁都用同樣的方式判斷成功或失敗。
+- **三種失敗都整理成「`data.message` 一定有字」**：
+  1. 後端回錯誤（400/404/409…）：用後端的 message。
+  2. 連不上後端（`fetch` 本身丟出錯誤）：用「系統發生錯誤，請稍後再試」。
+  3. 回應沒有 JSON（例如 Vite 轉接時後端沒開）：也用通用訊息。
+- fetch 預設的 `credentials: 'same-origin'`：同一個網址時自動帶上 Cookie，所以不用額外設定就能維持登入。
+
+### 6-7 登入狀態：auth.js
+
+**`frontend/src/auth.js`**
+
+```js
+// 登入狀態：全站共用的一個變數（不使用 Pinia）。
+// reactive 讓它變成「會通知畫面更新」的物件：auth.user 一改，導覽列就會自動跟著變。
+
+import { reactive } from 'vue'
+import { api } from '@/api'
+
+export const auth = reactive({
+  /** 目前登入的會員 { nickname, mobile }；未登入是 null */
+  user: null,
+  /** 是否已經問過後端「現在有沒有登入」 */
+  ready: false,
+})
+
+let loadingPromise = null
+
+/**
+ * 打開網頁時呼叫一次 GET /api/auth/me，取得登入狀態。
+ * 重新整理頁面後，瀏覽器還留著 Session Cookie，後端就會回傳會員資料，畫面不會被誤判成未登入。
+ * 重複呼叫只會真的問後端一次（第二次起直接回傳同一個 Promise）。
+ */
+export function loadCurrentUser() {
+  if (!loadingPromise) {
+    loadingPromise = api.get('/api/auth/me').then((result) => {
+      auth.user = result.ok ? result.data : null
+      auth.ready = true
+    })
+  }
+  return loadingPromise
+}
+
+/** 登入成功後呼叫 */
+export function setLoggedIn(user) {
+  auth.user = { nickname: user.nickname, mobile: user.mobile }
+}
+
+/** 登出、或發現 Session 已失效（API 回 401）時呼叫 */
+export function setLoggedOut() {
+  auth.user = null
+}
+```
+
+**白話解釋**
+- `auth` 是全站共用的「公布欄」：導覽列看著 `auth.user` 決定顯示「登入 / 註冊」還是「Cooqle (個人頁)」；登入頁登入成功後改它，導覽列就自動更新。這就是提示詞說的「登入狀態用簡單的共用變數」，不需要 Pinia。
+- **`loadCurrentUser()`（設計決策 13）**：
+  - 問題：重新整理頁面時，JavaScript 的變數全部歸零，`auth.user` 會變回 `null`，看起來像沒登入。但其實瀏覽器還留著 Session Cookie，後端仍然記得你。
+  - 解法：打開網頁時先呼叫 `GET /api/auth/me` 問後端，路由守衛**等這個答案回來**才決定要不要放行。
+- **Promise**：「一張還沒兌現的取貨單」。第一次呼叫時發出請求並記住這張單；之後再呼叫，直接回傳同一張單，不會重複問後端。
+- `auth.ready`：還沒問完之前，導覽列先不顯示第三個項目，避免已登入的人看到「登入 / 註冊」閃一下又變成暱稱。
+- 未登入時打開網頁，瀏覽器的開發者工具會出現一行紅色的 `401 (Unauthorized)`，那是 `/api/auth/me` 的正常回應（代表「你沒登入」），**不是錯誤**。
+
+### 6-8 Toast 狀態：toast.js
+
+**`frontend/src/toast.js`**
+
+```js
+// Toast 提示的狀態：任何頁面呼叫 showToast()，畫面上方就會出現提示，3 秒後自動消失。
+// 同一時間只顯示一則，新的會直接取代舊的。
+
+import { reactive } from 'vue'
+
+export const toast = reactive({
+  message: '',
+  /** 'success'（成功／一般）、'warning'（警告）、'error'（錯誤） */
+  type: 'success',
+  visible: false,
+})
+
+let hideTimer = null
+
+export function showToast(message, type = 'success') {
+  toast.message = message
+  toast.type = type
+  toast.visible = true
+
+  // 重新計時：前一則還沒消失就被新的取代時，從頭算 3 秒
+  clearTimeout(hideTimer)
+  hideTimer = setTimeout(() => {
+    toast.visible = false
+  }, 3000)
+}
+```
+
+**白話解釋**
+- 任何頁面只要 `showToast('登入成功')` 就會跳出提示；第二個參數決定樣式：`'success'`（預設）、`'warning'`、`'error'`。
+- `setTimeout(..., 3000)`：3 秒後執行，把 `visible` 改成 `false`，Toast 就消失。
+- `clearTimeout(hideTimer)`：新提示出現時，取消舊的倒數計時，所以新提示一定會完整顯示 3 秒，而且同時只會有一則。
+
+### 6-9 可重用元件
+
+#### PageTitle.vue：頁面標題
+
+**`frontend/src/components/PageTitle.vue`**
+
+```vue
+<!-- 頁面標題：置中粗體＋下方短底線（DESIGN.md 4.2） -->
+<script setup>
+defineProps({
+  title: { type: String, required: true },
+})
+</script>
+
+<template>
+  <h1 class="page-title">{{ title }}</h1>
+</template>
+
+<style scoped>
+.page-title {
+  margin: 0 0 40px;
+  font-size: var(--title-size);
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.4;
+}
+
+/* 標題下方的短底線 */
+.page-title::after {
+  content: '';
+  display: block;
+  width: var(--title-underline);
+  max-width: 100%;
+  height: var(--line);
+  margin: 12px auto 0;
+  background: var(--color-text);
+}
+
+@media (max-width: 767px) {
+  .page-title {
+    margin-bottom: 28px;
+  }
+}
+</style>
+```
+
+- `defineProps`：宣告這個元件接受哪些設定。`required: true` 代表一定要給。
+- `::after`：在標題後面用 CSS「畫」出那條短底線，不用多寫一個 HTML 元素。寬度用 `var(--title-underline)`，所以桌機 220px、平板 180px、手機 120px 會自動切換。
+
+#### BaseCard.vue：卡片
+
+**`frontend/src/components/BaseCard.vue`**
+
+```vue
+<!-- 卡片：暖灰背景、細邊框、圓角（DESIGN.md 4.3）。內容用 <slot /> 放進來 -->
+<template>
+  <div class="card">
+    <slot />
+  </div>
+</template>
+
+<style scoped>
+.card {
+  background: var(--color-surface);
+  border: var(--line) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--card-padding);
+}
+</style>
+```
+
+- `<slot />`：卡片裡要放什麼由使用的人決定。比喻：卡片是**相框**，slot 是放照片的位置。
+
+#### BaseInput.vue：輸入框
+
+**`frontend/src/components/BaseInput.vue`**
+
+```vue
+<!--
+  輸入框：上方標籤＋白色輸入框（DESIGN.md 4.4）。
+  用法：<BaseInput v-model="isbn" label="ISBN 查詢" placeholder="請輸入 13 位數 ISBN 碼..." />
+-->
+<script setup>
+import { useId } from 'vue'
+
+defineProps({
+  label: { type: String, required: true },
+  placeholder: { type: String, default: '' },
+  type: { type: String, default: 'text' },
+  /** 手機鍵盤類型，例如 'numeric' 會跳出數字鍵盤 */
+  inputmode: { type: String, default: undefined },
+  autocomplete: { type: String, default: 'off' },
+})
+
+// defineModel：讓父元件可以用 v-model 綁定這個輸入框的值
+const model = defineModel({ type: String, default: '' })
+
+// 產生不重複的 id，讓 <label for> 對到 <input id>（點標籤就能聚焦輸入框）
+const inputId = useId()
+</script>
+
+<template>
+  <div class="field">
+    <label class="field__label" :for="inputId">{{ label }}</label>
+    <input
+      :id="inputId"
+      v-model="model"
+      class="field__input"
+      :type="type"
+      :placeholder="placeholder"
+      :inputmode="inputmode"
+      :autocomplete="autocomplete"
+    />
+  </div>
+</template>
+
+<style scoped>
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field__label {
+  color: var(--color-text-muted);
+  font-size: 0.95em;
+  padding-left: 4px;
+}
+
+.field__input {
+  width: 100%;
+  min-height: 56px;
+  padding: 0 24px;
+  background: var(--color-input-bg);
+  border: var(--line) solid var(--color-border);
+  border-radius: var(--radius-input);
+  outline: none;
+}
+
+.field__input::placeholder {
+  color: #A59C92;
+}
+
+/* 聚焦時邊框變深，讓使用者知道正在輸入哪一格 */
+.field__input:focus {
+  border-color: var(--color-text-muted);
+}
+
+@media (max-width: 767px) {
+  .field__input {
+    min-height: 48px;
+    padding: 0 16px;
+  }
+}
+</style>
+```
+
+- **`defineModel()`**（Vue 3.4 起）：讓元件支援 `v-model`。父元件寫 `<BaseInput v-model="isbn" />`，使用者打字時 `isbn` 會自動更新，反過來改 `isbn` 輸入框也會跟著變。這叫**雙向綁定**。
+- `useId()`（Vue 3.5 起）：自動產生不重複的 id。`<label for>` 對到 `<input id>` 之後，點標籤文字就能聚焦輸入框，螢幕報讀軟體也能正確念出欄位名稱。
+- `inputmode="numeric"`：手機上會跳出數字鍵盤（輸入 ISBN、手機號碼時好用）。
+
+#### BaseButton.vue：按鈕
+
+**`frontend/src/components/BaseButton.vue`**
+
+```vue
+<!--
+  按鈕（DESIGN.md 4.5）。
+  用法：<BaseButton variant="danger" block @click="logout">登出帳號</BaseButton>
+    variant：primary（炭灰，預設）／secondary（棕灰）／danger（紅）
+    block：滿版寬度
+    spaced：文字加字距（例如「登 入 / 註 冊」）
+-->
+<script setup>
+defineProps({
+  variant: { type: String, default: 'primary' },
+  type: { type: String, default: 'button' },
+  block: { type: Boolean, default: false },
+  spaced: { type: Boolean, default: false },
+  disabled: { type: Boolean, default: false },
+})
+</script>
+
+<template>
+  <button
+    :type="type"
+    :disabled="disabled"
+    :class="['btn', `btn--${variant}`, { 'btn--block': block, 'btn--spaced': spaced }]"
+  >
+    <slot />
+  </button>
+</template>
+
+<style scoped>
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding: 0 28px;
+  border: none;
+  border-radius: var(--radius-btn);
+  color: var(--color-bg);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn--primary {
+  background: var(--color-text);
+}
+
+.btn--secondary {
+  background: var(--color-btn-secondary);
+}
+
+.btn--danger {
+  background: var(--color-danger);
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.btn--spaced {
+  letter-spacing: 0.1em;
+  font-weight: 700;
+}
+
+.btn:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 767px) {
+  .btn {
+    min-height: 48px; /* 仍大於 44px，手指好點 */
+  }
+}
+</style>
+```
+
+- ``:class="['btn', `btn--${variant}`, {...}]"``：依 props 組出 class。`variant="danger"` 就會有 `btn--danger`，背景變紅。
+  - 前面的冒號 `:` 代表「後面是 JavaScript，不是普通文字」。
+  - `{ 'btn--block': block }`：`block` 是 true 才加上這個 class。
+- `type="button"` 是預設值：放在 `<form>` 裡的按鈕預設是 `submit`，按了會送出表單。要送出的按鈕再明確寫 `type="submit"`。
+- 高度 56px（手機 48px），都大於 44px 的最小點擊區域。
+
+#### ErrorBox.vue、EmptyBox.vue：錯誤框與空狀態框
+
+**`frontend/src/components/ErrorBox.vue`**
+
+```vue
+<!--
+  錯誤／警示框：淡紅底、紅框、深紅粗體字（DESIGN.md 4.6）。
+  用法：<ErrorBox>⚠ 錯誤提示：找不到此書籍</ErrorBox>
+    center：文字置中（收藏頁的未登入提示用）
+-->
+<script setup>
+defineProps({
+  center: { type: Boolean, default: false },
+})
+</script>
+
+<template>
+  <div :class="['error-box', { 'error-box--center': center }]" role="alert">
+    <slot />
+  </div>
+</template>
+
+<style scoped>
+.error-box {
+  padding: 32px 48px;
+  background: var(--color-danger-bg);
+  border: var(--line) solid var(--color-danger-border);
+  border-radius: var(--radius-input);
+  color: var(--color-danger-text);
+  font-weight: 700;
+}
+
+.error-box--center {
+  text-align: center;
+}
+
+@media (max-width: 767px) {
+  .error-box {
+    padding: 24px;
+  }
+}
+</style>
+```
+
+**`frontend/src/components/EmptyBox.vue`**
+
+```vue
+<!-- 空狀態框：虛線邊框、置中次要色文字（DESIGN.md 4.7） -->
+<template>
+  <div class="empty-box">
+    <slot />
+  </div>
+</template>
+
+<style scoped>
+.empty-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  padding: 24px;
+  border: var(--line) dashed var(--color-border);
+  border-radius: var(--radius-card);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+</style>
+```
+
+- `role="alert"`：錯誤框出現時，螢幕報讀軟體會主動念出來。
+
+#### AppToast.vue：Toast
+
+**`frontend/src/components/AppToast.vue`**
+
+```vue
+<!--
+  Toast 提示（DESIGN.md 4.8）：畫面上方置中、3 秒後自動消失、同時只顯示一則。
+  只要在 App.vue 放一個；各頁面呼叫 toast.js 的 showToast() 就會出現。
+-->
+<script setup>
+import { toast } from '@/toast'
+</script>
+
+<template>
+  <!-- Transition：出現與消失時套用淡入淡出（唯一允許的動畫） -->
+  <Transition name="toast-fade">
+    <div v-if="toast.visible" :class="['toast', `toast--${toast.type}`]" role="status" aria-live="polite">
+      {{ toast.message }}
+    </div>
+  </Transition>
+</template>
+
+<style scoped>
+.toast {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  width: max-content;
+  max-width: min(560px, 90vw); /* 手機上最多為螢幕寬度的 90% */
+  padding: 14px 28px;
+  border: var(--line) solid transparent;
+  border-radius: var(--radius-input);
+  text-align: center;
+  font-weight: 500;
+}
+
+/* 成功／一般提示 */
+.toast--success {
+  background: var(--color-text);
+  border-color: var(--color-text);
+  color: var(--color-bg);
+}
+
+/* 警告 */
+.toast--warning {
+  background: var(--color-border);
+  border-color: var(--color-text-muted);
+  color: var(--color-text);
+}
+
+/* 錯誤：沿用錯誤框的紅色系 */
+.toast--error {
+  background: var(--color-danger-bg);
+  border-color: var(--color-danger-border);
+  color: var(--color-danger-text);
+  font-weight: 700;
+}
+
+/* 淡入淡出 */
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.3s;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+}
+</style>
+```
+
+- 整個網站只放**一個** AppToast（在 App.vue），它看著 `toast.js` 的公布欄：`visible` 變 true 就出現。
+- `<Transition name="toast-fade">`：Vue 內建的動畫外框。元件出現或消失時，自動套上 `toast-fade-enter-active` 等 class，搭配 CSS 做出 0.3 秒的淡入淡出（DESIGN.md 唯一允許的動畫）。
+- `position: fixed` ＋ `left: 50%` ＋ `transform: translateX(-50%)`：固定在畫面上方正中間，捲動頁面也不會跑掉。
+- `max-width: min(560px, 90vw)`：最寬 560px，手機上不超過螢幕寬度的 90%（`vw` = 螢幕寬度的 1%）。
+
+#### AppNavbar.vue：頂部導覽列
+
+**`frontend/src/components/AppNavbar.vue`**
+
+```vue
+<!--
+  頂部導覽列（DESIGN.md 4.1）：所有頁面共用。
+  左：LIBRARY / 侘寂書閣（回首頁）；右：首頁 ｜ 我的收藏 ｜ 登入 / 註冊（或「暱稱 (個人頁)」）
+-->
+<script setup>
+import { useRoute } from 'vue-router'
+import { auth } from '@/auth'
+
+// 目前所在的網址，用來把「目前頁面」的項目加粗
+const route = useRoute()
+</script>
+
+<template>
+  <header class="navbar">
+    <RouterLink to="/" class="navbar__logo">LIBRARY / <strong>侘寂書閣</strong></RouterLink>
+
+    <nav class="navbar__menu">
+      <RouterLink to="/" :class="['navbar__item', { 'is-active': route.path === '/' }]">首頁</RouterLink>
+
+      <!-- 未登入點這裡時，路由守衛會提示並導向登入頁（見 router/index.js） -->
+      <RouterLink
+        to="/favorites"
+        :class="['navbar__item', 'navbar__item--divider', { 'is-active': route.path === '/favorites' }]"
+      >
+        我的收藏
+      </RouterLink>
+
+      <!-- 還沒問完後端「有沒有登入」之前先不顯示，避免畫面閃一下「登入 / 註冊」 -->
+      <template v-if="auth.ready">
+        <RouterLink
+          v-if="auth.user"
+          to="/profile"
+          :class="['navbar__item', 'navbar__item--divider', { 'is-active': route.path === '/profile' }]"
+        >
+          {{ auth.user.nickname }} (個人頁)
+        </RouterLink>
+        <RouterLink
+          v-else
+          to="/login"
+          :class="['navbar__item', 'navbar__item--divider', 'navbar__item--muted', { 'is-active': route.path === '/login' }]"
+        >
+          登入 / 註冊
+        </RouterLink>
+      </template>
+    </nav>
+  </header>
+</template>
+
+<style scoped>
+.navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 104px;
+  padding: 16px max(var(--page-gutter), calc((100% - 1440px) / 2));
+  background: var(--color-surface);
+}
+
+.navbar__logo {
+  font-size: 30px;
+  white-space: nowrap;
+}
+
+.navbar__logo strong {
+  font-weight: 700;
+}
+
+.navbar__menu {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 40px;
+}
+
+.navbar__item {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-min); /* 至少 44px 高，方便手指點擊 */
+  font-size: 20px;
+}
+
+/* 「我的收藏」與第三項前面的細直線 */
+.navbar__item--divider::before {
+  content: '';
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-right: 14px;
+  background: var(--color-text);
+}
+
+/* 「登入 / 註冊」平常是較淺的灰色 */
+.navbar__item--muted {
+  color: var(--color-text-muted);
+}
+
+/* 目前所在頁面：加粗 */
+.navbar__item.is-active {
+  font-weight: 700;
+}
+
+/* 平板：字小一點 */
+@media (max-width: 1023px) {
+  .navbar__logo {
+    font-size: 24px;
+  }
+
+  .navbar__menu {
+    gap: 8px 24px;
+  }
+
+  .navbar__item {
+    font-size: 18px;
+  }
+}
+
+/* 手機：logo 一列置中；三個項目在下一列置中（不使用漢堡選單） */
+@media (max-width: 767px) {
+  .navbar {
+    flex-direction: column;
+    gap: 4px;
+    min-height: auto;
+    padding: 16px var(--page-gutter) 8px;
+  }
+
+  .navbar__logo {
+    font-size: 22px;
+  }
+
+  .navbar__menu {
+    justify-content: center;
+    gap: 0 16px;
+  }
+
+  .navbar__item {
+    font-size: 16px;
+  }
+
+  .navbar__item--divider::before {
+    margin-right: 10px;
+  }
+}
+</style>
+```
+
+- `RouterLink`：Vue Router 的連結。跟 `<a href>` 很像，但點了不會重新載入整個網頁，只換中間的內容。
+- `useRoute()`：取得目前的網址，`route.path === '/favorites'` 就把「我的收藏」加粗。
+- `v-if` / `v-else`：已登入顯示「暱稱 (個人頁)」，否則顯示「登入 / 註冊」。暱稱用註冊時的原樣（例如 `Cooqle`）。
+- 「我的收藏」**不管有沒有登入都連到 `/favorites`**。未登入時由路由守衛擋下並提示，規則只寫在一個地方。
+- **手機版**：`flex-direction: column` 讓 logo 和選單上下排列，選單 `justify-content: center` 置中，不使用漢堡選單。
+- `padding: 16px max(var(--page-gutter), calc((100% - 1440px) / 2))`：超寬螢幕時，導覽列內容不會貼到最左右兩邊。
+
+### 6-10 路由與守衛：router/index.js
+
+**`frontend/src/router/index.js`**
+
+```js
+// 路由：決定「哪個網址顯示哪一頁」，以及未登入時能不能進去（路由守衛）。
+
+import { createRouter, createWebHistory } from 'vue-router'
+import HomeView from '@/views/HomeView.vue'
+import LoginView from '@/views/LoginView.vue'
+import FavoritesView from '@/views/FavoritesView.vue'
+import ProfileView from '@/views/ProfileView.vue'
+import { auth, loadCurrentUser } from '@/auth'
+import { showToast } from '@/toast'
+import { MESSAGES } from '@/messages'
+
+const router = createRouter({
+  history: createWebHistory(import.meta.env.BASE_URL),
+  routes: [
+    { path: '/', component: HomeView },
+    { path: '/login', component: LoginView },
+    {
+      path: '/favorites',
+      component: FavoritesView,
+      // meta：自己加的備註。requiresAuth = 需要登入；loginMessage = 未登入時的提示
+      meta: { requiresAuth: true, loginMessage: MESSAGES.FAVORITES_PAGE_LOGIN_REQUIRED },
+    },
+    {
+      path: '/profile',
+      component: ProfileView,
+      meta: { requiresAuth: true, loginMessage: MESSAGES.PROFILE_PAGE_LOGIN_REQUIRED },
+    },
+    // 打錯網址：回首頁
+    { path: '/:pathMatch(.*)*', redirect: '/' },
+  ],
+})
+
+// 路由守衛：每次換頁「之前」都會執行
+router.beforeEach(async (to) => {
+  // 先等後端回答「現在有沒有登入」（只有打開網頁的第一次需要真的等）
+  await loadCurrentUser()
+
+  if (to.meta.requiresAuth && !auth.user) {
+    showToast(to.meta.loginMessage, 'warning')
+    return '/login' // 回傳網址 = 改去這一頁
+  }
+  // 不回傳任何東西 = 放行
+})
+
+export default router
+```
+
+**白話解釋**
+- `routes`：網址與頁面的對照表。
+- `meta`：我們自己在路由上加的「備註」。`requiresAuth: true` 代表需要登入，`loginMessage` 是未登入時要顯示的提示。守衛只要看備註，不用寫死「如果是 /favorites 就…」。
+- **守衛的流程**：
+  ```
+  使用者要去 /favorites
+     │
+     ▼
+  await loadCurrentUser()     ← 第一次打開網頁時，等後端回答有沒有登入
+     │
+     ├─ 需要登入，但 auth.user 是 null → 跳 Toast「請先登入後再檢視收藏內容」→ return '/login'（改去登入頁）
+     └─ 其他情況 → 不 return（放行）
+  ```
+- **新舊寫法**：舊教學（Vue Router 3、4）常寫 `beforeEach((to, from, next) => { ... next('/login') })`，忘了呼叫 `next()` 畫面就會卡住。新寫法直接 `return` 目標網址，不 return 就是放行，比較不會出錯。Vue Router 5 建議用新寫法。
+- `/:pathMatch(.*)*`：「其他所有網址」，打錯網址就導回首頁。
+
+### 6-11 網站外框與進入點：App.vue、main.js
+
+**`frontend/src/App.vue`**
+
+```vue
+<!-- 整個網站的外框：導覽列＋目前頁面＋Toast -->
+<script setup>
+import AppNavbar from '@/components/AppNavbar.vue'
+import AppToast from '@/components/AppToast.vue'
+</script>
+
+<template>
+  <AppNavbar />
+  <main>
+    <!-- 依網址顯示對應的頁面（router/index.js 決定） -->
+    <RouterView />
+  </main>
+  <AppToast />
+</template>
+```
+
+**`frontend/src/main.js`**
+
+```js
+import { createApp } from 'vue'
+import App from './App.vue'
+import router from './router'
+// 全域樣式（CSS 變數、基本設定）：只在這裡載入一次，所有元件都能用
+import './styles/base.css'
+
+const app = createApp(App)
+
+app.use(router)
+
+app.mount('#app')
+```
+
+- `<RouterView />`：「頁面放這裡」。網址是 `/login` 時，這裡就顯示 LoginView。
+- `import './styles/base.css'`：全域樣式在進入點載入一次，所有元件都吃得到 CSS 變數。
+
+### 6-12 暫時的頁面
+
+4 個頁面先只放標題，例如：
+
+**`frontend/src/views/FavoritesView.vue`**（暫時版本）
+
+```vue
+<!-- 暫時的頁面：步驟 9 完成 -->
+<script setup>
+import PageTitle from '@/components/PageTitle.vue'
+</script>
+
+<template>
+  <div class="page page--wide">
+    <PageTitle title="我的收藏 — 書籍清單" />
+  </div>
+</template>
+```
+
+其他三頁（`HomeView.vue`、`LoginView.vue`、`ProfileView.vue`）結構相同，只有標題和寬窄不同：首頁 `page--wide`「首頁 — 書籍查詢」；登入 `page--narrow`「會員 登入 / 註冊」；個人頁 `page--narrow`「個人資訊」。
+
+### 對應的 Scenario
+
+| BDD Scenario | 狀態 | 由誰實作 |
+|---|---|---|
+| 未登入使用者嘗試訪問收藏頁面被拒絕 | ✅ 前端通過（提示＋導向 /login） | `router/index.js` 守衛 |
+| 未登入使用者嘗試訪問個人頁面被拒絕 | ✅ 前端通過（提示「請先註冊/登入」＋導向 /login） | `router/index.js` 守衛 |
+| 重新整理後仍維持登入（設計決策 13） | ✅ 通過 | `auth.js` 的 `loadCurrentUser` |
+
+### 怎麼驗證成功
+
+**啟動方式（之後每一步都一樣，要開兩個終端機視窗）**
+```bash
+cd backend
+./mvnw spring-boot:run
+```
+```bash
+cd frontend
+npm run dev
+```
+用瀏覽器打開 <http://localhost:5173>。
+
+**驗證 1：能編譯**
+```bash
+cd frontend
+npm run build
+```
+預期看到 `✓ built in ...ms`，沒有錯誤。（產生的 `dist/` 資料夾可以刪掉，它已被 `.gitignore` 排除。）
+
+**驗證 2：proxy 有效**
+```bash
+curl http://localhost:5173/api/books/9789861343722
+```
+打的是 Vite 的 5173，卻拿到後端的書籍 JSON，代表轉接成功。
+
+**驗證 3：瀏覽器實測（2026-10-16）**
+
+| # | 操作 | 結果 |
+|---|---|---|
+| 1 | 未登入打開首頁 | 導覽列：「首頁」粗體｜我的收藏｜登入 / 註冊（淺灰） ✅ |
+| 2 | 未登入點「我的收藏」 | 網址變 `/login`，上方出現警告 Toast「請先登入後再檢視收藏內容」，3 秒後淡出 ✅ |
+| 3 | 未登入直接在網址列輸入 `/profile` | 導向 `/login`，Toast「請先註冊/登入」 ✅ |
+| 4 | 登入 Cooqle 後重新整理 `/profile` | 停留在個人頁，導覽列顯示「Cooqle (個人頁)」且為粗體，**沒有**被誤判成未登入 ✅ |
+| 5 | 登出後再點「我的收藏」 | 再次被擋下並導向 `/login` ✅ |
+
+> 第 4 步的登入，這一步是在瀏覽器開發者工具的 Console 執行下面這行（步驟 8 做完登入頁後就不用了）：
+> ```js
+> await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nickname:'Cooqle', mobile:'0900123456'})})
+> ```
+
+**驗證 4：RWD（瀏覽器開發者工具的「裝置模式」）**
+
+| 寬度 | 結果 |
+|---|---|
+| 1280px（桌機） | logo 在左、三個項目在右，同一列 ✅ |
+| 768px（平板） | 同桌機，字級略小 ✅ |
+| 375px（手機） | logo 一列置中，三個項目在下一列置中；每個項目高 44px ✅ |
+| 320px（最小） | 沒有水平捲軸（頁面寬度 = 320px） ✅ |
+
+開啟方式：Chrome 按 `F12`（Mac 是 `Cmd + Option + I`）→ 點左上角的手機平板圖示 → 上方輸入寬度。
+
+---
+
+<!-- 步驟 7 之後的內容會在完成時陸續補上 -->
 
 ## 如何快速上手
 
