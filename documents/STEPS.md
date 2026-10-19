@@ -21,6 +21,7 @@
 - [步驟 9：收藏頁（清單、刪除、Session 失效備用畫面）](#步驟-9收藏頁清單刪除session-失效備用畫面)
 - [步驟 10：個人頁與登出](#步驟-10個人頁與登出)
 - [步驟 11：總驗收與手動測試清單](#步驟-11總驗收與手動測試清單)
+- [步驟 12：Google Books API 金鑰](#步驟-12google-books-api-金鑰)
 - [如何快速上手](#如何快速上手)
 
 ---
@@ -2032,23 +2033,17 @@ curl http://localhost:8080/api/books/9789861343722
 | `POST /api/books/9789861343722` | 405 `{"message":"無法處理此請求"}` | 全域例外處理接住 405 ✅ |
 | `/api/books/9780134685991`（本機沒有） | 503 `{"message":"查詢失敗，請稍後再試"}` | 見下方說明 |
 
-**關於 503：Google 的匿名額度用完了**
+**關於 503：不帶金鑰時 Google 一律回 429**
 實測當天呼叫 Google Books 一律收到 503。後端主控台印出原因：
 ```
 WARN ... GoogleBooksClient : Google Books 查詢失敗（ISBN 9780134685991）：429 Too Many Requests:
   "Quota exceeded for quota metric 'Queries' and limit 'Queries per day' ..."
 ```
-意思是：**不帶 API 金鑰的呼叫，是跟全世界所有匿名使用者共用同一份每日額度**，額度用完時 Google 就回 429。
-我們的程式把它轉成「查詢失敗，請稍後再試」，這正是設計上的行為。但「Google 真的查到書並存回本機」這條路徑，當天無法用真實網路驗證，目前只靠 Mock 測試保證。
+我們的程式把它轉成「查詢失敗，請稍後再試」，這正是設計上的行為。但「Google 真的查到書並存回本機」這條路徑，當時無法用真實網路驗證，只靠 Mock 測試保證。
 
-怎麼自己確認是不是額度問題：
-```bash
-curl "https://www.googleapis.com/books/v1/volumes?q=isbn:9780134685991"
-```
-- 回傳書籍資料 → 額度恢復了，可以重新測試我們的 API。
-- 回傳 `"code": 429` → 額度還沒恢復（通常隔天會重置）。
-
-> 如果之後想穩定使用，可以申請免費的 Google Books API 金鑰，金鑰會有自己的額度。這會改變設計決策 12（目前規定不使用金鑰），要改之前請先討論。
+> ⚠️ **更正（2026-10-19）**：這裡原本寫「匿名呼叫和全世界共用每日額度，通常隔天會重置」，**這個判斷是錯的**。
+> 連續幾天再測，Google 回應的詳細內容裡有一行 `"quota_limit_value": "0"`，代表 **Google 給不帶金鑰的呼叫的每日上限就是 0**，不是「用完了」，所以不管等多久都會是 429。
+> 解法是申請免費的 API 金鑰，見[步驟 12](#步驟-12google-books-api-金鑰)。（上方程式碼註解裡「共用每日額度」的說法也一併以步驟 12 為準。）
 
 ---
 
@@ -5441,7 +5436,7 @@ errorMessage 有值？ → 錯誤框 (c)
 |---|---|---|
 | 成功查詢到存在的書籍資訊 | ✅ 前後端通過 | 顯示書名、作者、出版日期與「加入收藏」按鈕 |
 | 本機沒有但 Google Books 有收錄的書籍 | 🔸 後端以 Mock 通過；畫面沿用同一個結果卡片 | 實測當天 Google 回 429，無法用真實資料測 |
-| 本機沒有且 Google Books 無法連線時顯示錯誤 | ✅ 前後端通過 | Google 額度用完（429）剛好就是真實的「無法使用」情境，畫面顯示「查詢失敗，請稍後再試」 |
+| 本機沒有且 Google Books 無法連線時顯示錯誤 | ✅ 前後端通過 | 不帶金鑰時 Google 回 429，剛好就是真實的「無法使用」情境，畫面顯示「查詢失敗，請稍後再試」 |
 | 無效或不存在的 ISBN：9780000000000 | 🔸 後端以 Mock 通過 | 真實環境下 Google 回 429，所以畫面顯示的是「查詢失敗，請稍後再試」；Google 恢復後應顯示「找不到此書籍」 |
 | 無效或不存在的 ISBN：INVALID_ISBN | ✅ 前後端通過 | 前端直接擋下，沒有呼叫 API |
 | 無效或不存在的 ISBN：978986134372 | ✅ 前後端通過 | 同上 |
@@ -6330,19 +6325,15 @@ npm run build
 | ☐ | Scenario | 前提 | 操作 | 預期結果 |
 |---|---|---|---|---|
 | ☐ | 成功查詢到存在的書籍資訊 | 任意 | 首頁輸入 `9789861343722` → 按「查詢」 | 卡片顯示「書名：侘寂：尋找日常中的不完美之美」「作者：雷納·克魯克」「出版日期：2020-05-01」，下方有「+ 加入收藏」 |
-| ☐ | 本機沒有但 Google Books 有收錄 | Google 額度正常（見下方說明） | 輸入一本本機沒有的真實 ISBN，例如 `9780134685991` → 查詢 | 顯示 Google 的書籍資料；**再查一次**時速度明顯變快（已存回本機）；用 MySQL Workbench 查 `SELECT * FROM books;` 應多出這本書 |
+| ☐ | 本機沒有但 Google Books 有收錄 | 已設定 Google Books API 金鑰（步驟 12） | 輸入一本本機沒有的真實 ISBN，例如 `9780134685991` → 查詢 | 顯示 Google 的書籍資料；**再查一次**時速度明顯變快（已存回本機）；用 MySQL Workbench 查 `SELECT * FROM books;` 應多出這本書 |
 | ☐ | Google Books 無法連線 | 拔掉網路線或關閉 Wi-Fi（後端要能連 MySQL） | 輸入本機沒有的 `9780000000001` → 查詢 | 紅框「⚠ 錯誤提示：查詢失敗，請稍後再試」，沒有書籍資料 |
-| ☐ | 無效 ISBN：不存在 | Google 額度正常 | 輸入 `9780000000000` → 查詢 | 紅框「⚠ 錯誤提示：找不到此書籍」 |
+| ☐ | 無效 ISBN：不存在 | 已設定 API 金鑰 | 輸入 `9780000000000` → 查詢 | 紅框「⚠ 錯誤提示：找不到此書籍」 |
 | ☐ | 無效 ISBN：英文 | 任意 | 輸入 `INVALID_ISBN` → 查詢 | 紅框「⚠ 錯誤提示：ISBN 碼格式錯誤或無效」 |
 | ☐ | 無效 ISBN：12 碼 | 任意 | 輸入 `978986134372` → 查詢 | 紅框「⚠ 錯誤提示：ISBN 碼格式錯誤或無效」 |
 | ☐ | 無效 ISBN：空白 | 任意 | 輸入框留空 → 查詢 | 紅框「⚠ 錯誤提示：請輸入 ISBN 碼」 |
 | ☐ | （補充）查詢中 | 任意 | 查一本本機沒有的書，注意按鈕 | 等待期間按鈕顯示「查詢中...」且不能再按 |
 
-> **Google 額度說明**：不帶 API 金鑰的呼叫和全世界的匿名使用者共用每日額度。開發期間（2026-10-16）額度一直是用完的狀態（Google 回 429）。測試前可以先執行下面的指令：
-> ```bash
-> curl "https://www.googleapis.com/books/v1/volumes?q=isbn:9780134685991"
-> ```
-> 回傳書籍資料才代表額度正常；回傳 `"code": 429` 時，「Google 有收錄」和「找不到此書籍」這兩項會顯示「查詢失敗，請稍後再試」，請隔天再測。
+> **Google Books API 金鑰**：Google 給不帶金鑰的呼叫的每日上限是 0（詳見步驟 3 的更正與步驟 12）。沒有在 `application-local.properties` 填好 `google.books.api-key` 的話，「Google 有收錄」和「找不到此書籍」這兩項一定會顯示「查詢失敗，請稍後再試」。
 
 #### 需求 5、6：登入 / 註冊
 
@@ -6421,9 +6412,9 @@ npm run build
 |---|---|---|
 | Background | ✅ `DataSeederTest` | — |
 | 成功查詢到存在的書籍資訊 | ✅ | ✅ |
-| 本機沒有但 Google Books 有收錄的書籍 | ✅（Mock） | 🔸 Google 額度用完，待手動測試 |
+| 本機沒有但 Google Books 有收錄的書籍 | ✅（Mock） | 🔸 待設定 API 金鑰後手動測試（步驟 12） |
 | 本機沒有且 Google Books 無法連線時顯示錯誤 | ✅（Mock） | ✅（真實的 429） |
-| 輸入無效或不存在的 ISBN 碼（4 組） | ✅ | ✅（「找不到此書籍」那組待 Google 額度恢復後再確認畫面） |
+| 輸入無效或不存在的 ISBN 碼（4 組） | ✅ | ✅（「找不到此書籍」那組待設定 API 金鑰後再確認畫面） |
 | 未登入狀態下點擊「加入收藏」需引導至登入/註冊 | — | ✅ |
 | 使用暱稱與手機號碼成功登入 | ✅ | ✅ |
 | 暱稱大小寫視為相同 | ✅ | ✅ |
@@ -6451,9 +6442,444 @@ npm run build
 | 沒有密碼 | 知道暱稱和手機就能登入別人的帳號 | 加上密碼（雜湊後儲存）或簡訊驗證碼 |
 | 沒有 CSRF 防護 | 壞網站可能趁你登入時冒用你的身分送請求 | 改用 Spring Security，或設定 Cookie `SameSite` 並加上 CSRF Token |
 | `ddl-auto=update` | 程式自動改資料表，無法追蹤每次變更 | 改用 Flyway 等工具管理資料表版本 |
-| Google Books 不帶金鑰 | 匿名額度和全世界共用，常常用完（429） | 申請免費的 API 金鑰（需要先討論，會改變設計決策 12） |
+| Google Books API 金鑰 | 不帶金鑰時上限為 0（一律 429）；金鑰本身有每日額度限制 | 已支援金鑰（步驟 12）；正式上線可再限制金鑰的使用來源，或加上快取減少呼叫次數 |
 | Vite proxy 只在開發時有效 | `npm run build` 的成品沒有轉接功能 | 部署時用 Nginx 等反向代理，或讓 Spring Boot 直接提供前端檔案 |
 | Session 存在記憶體 | 後端重新啟動，所有人都會被登出 | 用 Spring Session ＋ Redis 等外部儲存 |
+
+---
+
+## 步驟 12：Google Books API 金鑰
+
+### 為什麼需要這一步
+原本的設計決策 12 是「呼叫 Google Books 時不使用 API 金鑰」。但連續幾天實測，Google 一律回 429，而且回應的詳細內容裡有這一行：
+```
+"quota_limit_value": "0"
+```
+意思是 **Google 給不帶金鑰的呼叫的每日上限就是 0**。這不是「今天用完了」，而是根本不給用，所以等再久都沒用（步驟 3 原本「隔天會重置」的說法是錯的，已在步驟 3 更正）。
+解法：申請一把**免費的 API 金鑰**，讓呼叫算在你自己專案的額度裡。
+
+> 這一步改變了提示詞的設計決策 12（從「不使用金鑰」變成「可設定金鑰，金鑰不進 git」）。PROMPT.md 由你自己維護，記得自己更新版本紀錄。
+
+### 目標
+1. 金鑰放在 `application-local.properties`（**不進 git**，和資料庫密碼一樣）。
+2. `GoogleBooksClient`：有設定金鑰就在網址加上 `&key=...`；沒設定就維持原本行為，所以沒有金鑰的人照樣能啟動、能跑測試。
+3. 錯誤紀錄裡如果出現網址，先把金鑰遮成 `***`，避免金鑰出現在紀錄檔裡。
+4. 逾時設定從 Java 程式搬到 `application.properties`，比較好調整，也讓測試能接上「假的 Google」。
+
+### 名詞先解釋
+- **API 金鑰（API Key）**：一串像密碼的文字，告訴 Google「這次呼叫是哪個專案發出的」，Google 就用那個專案的額度計算。它本質上就是**密碼**，不能公開。
+- **`@Value("${google.books.api-key:}")`**：從設定檔讀出 `google.books.api-key` 的值，放進參數。冒號 `:` 後面是「找不到這個設定時的預設值」，這裡什麼都沒寫，代表預設是空字串。
+- **MockRestServiceServer**：Spring 內建的「假的外部網站」。測試時把它接在 RestClient 上，就能檢查程式**實際送出了什麼網址**，也能決定假 Google 要回什麼（成功、查無資料、429）。整個過程不會連網。
+
+### 建立或修改的檔案
+```
+backend/src/main/java/com/wabisabi/library/client/GoogleBooksClient.java      修改：讀取金鑰、遮罩金鑰、逾時改由設定檔決定
+backend/src/main/resources/application.properties                               修改：逾時設定、金鑰的空白預設值
+backend/src/main/resources/application-local.properties.example                 修改：加上 google.books.api-key 欄位
+backend/src/test/java/com/wabisabi/library/client/GoogleBooksClientHttpTest.java 新增：5 個測試
+```
+你自己的 `application-local.properties` 不會被程式修改，金鑰要由你親手填進去（見 12-5）。
+
+### 12-1 application.properties（修改後全文）
+
+**`backend/src/main/resources/application.properties`**
+
+```properties
+# ===== 基本設定 =====
+spring.application.name=library
+# 後端埠號（Vite 開發伺服器會把 /api 轉到這裡）
+server.port=8080
+
+# 啟用 local 設定檔：Spring Boot 會額外讀取 application-local.properties
+# （資料庫網址、帳號、密碼放在那裡，不進 git）
+spring.profiles.active=local
+
+# ===== JPA 設定 =====
+# update：啟動時依照 Entity 類別自動建立／補上資料表欄位。
+# 注意：僅限練習使用！正式專案應改用 Flyway 等工具管理資料表變更。
+spring.jpa.hibernate.ddl-auto=update
+# 關閉 open-in-view：資料庫連線只在 Service 裡使用，避免新手踩到隱藏的效能問題
+spring.jpa.open-in-view=false
+# 想看 JPA 實際執行的 SQL 時，把下面改成 true
+spring.jpa.show-sql=false
+
+# ===== 呼叫外部網站（Google Books）的逾時設定 =====
+# 連不上時最多等 3 秒、連上後最多等 5 秒，就放棄並回「查詢失敗，請稍後再試」
+spring.http.clients.connect-timeout=3s
+spring.http.clients.read-timeout=5s
+
+# Google Books API 金鑰：真正的值放在 application-local.properties（不進 git），這裡只留空白預設值
+google.books.api-key=
+```
+
+**白話解釋**
+- `spring.http.clients.connect-timeout` / `read-timeout`：Spring Boot 4 提供的設定，會自動套用到 Spring 準備的 `RestClient.Builder`。效果和步驟 3 在程式裡寫的 3 秒、5 秒一樣，只是改成用設定檔調整。（實測時暫時把 read-timeout 改成 1ms，查詢在 0.6 秒內就失敗了，證明這個設定真的有作用。）
+- `google.books.api-key=`：留空白的預設值。真正的金鑰寫在 `application-local.properties`，那個檔案的設定會**蓋過**這裡的值。
+
+### 12-2 application-local.properties.example（修改後全文）
+
+**`backend/src/main/resources/application-local.properties.example`**
+
+```
+# 使用方式：
+# 1. 複製這個檔案，改名為 application-local.properties（放在同一個資料夾）
+# 2. 填入你自己的資料庫連線資訊與 Google Books API 金鑰
+# 3. application-local.properties 已列在 .gitignore，不會被提交到 git
+#
+# 網址範例：jdbc:mysql://localhost:3306/library?serverTimezone=Asia/Taipei
+spring.datasource.url=
+spring.datasource.username=
+spring.datasource.password=
+
+# Google Books API 金鑰（申請方式見 documents/STEPS.md 步驟 12）
+# 留空也能啟動，但查詢本機沒有的書時，Google 會回 429，畫面顯示「查詢失敗，請稍後再試」
+google.books.api-key=
+```
+
+### 12-3 GoogleBooksClient.java（修改後全文）
+
+**`backend/src/main/java/com/wabisabi/library/client/GoogleBooksClient.java`**
+
+```java
+package com.wabisabi.library.client;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+import com.wabisabi.library.entity.Book;
+
+import tools.jackson.databind.JsonNode;
+
+/**
+ * 呼叫 Google Books API，用 ISBN 查書。
+ *
+ * API 金鑰放在 application-local.properties 的 google.books.api-key（不進 git）：
+ * - 有填：網址加上 &key=...，使用自己專案的額度
+ * - 沒填：不帶金鑰呼叫（Google 給匿名呼叫的額度上限是 0，所以一定會回 429，畫面顯示「查詢失敗，請稍後再試」）
+ *
+ * 呼叫的網址：https://www.googleapis.com/books/v1/volumes?q=isbn:9789861343722&key=你的金鑰
+ * 逾時時間在 application.properties 設定（spring.http.clients.connect-timeout / read-timeout）。
+ */
+@Component
+public class GoogleBooksClient {
+
+	private static final Logger log = LoggerFactory.getLogger(GoogleBooksClient.class);
+
+	private final RestClient restClient;
+	private final String apiKey;
+
+	/**
+	 * @param builder Spring Boot 準備好的 RestClient 組裝器（已套用 application.properties 的逾時設定）
+	 * @param apiKey  設定檔的 google.books.api-key；「:」後面沒寫東西代表沒設定時用空字串
+	 */
+	public GoogleBooksClient(RestClient.Builder builder, @Value("${google.books.api-key:}") String apiKey) {
+		this.restClient = builder.baseUrl("https://www.googleapis.com/books/v1").build();
+		this.apiKey = (apiKey == null) ? "" : apiKey.trim();
+	}
+
+	/**
+	 * 用 ISBN 查書。
+	 *
+	 * @return 查到 → 裝著 Book 的 Optional；Google 沒有這本書 → 空的 Optional
+	 * @throws GoogleBooksUnavailableException Google 無法使用時
+	 */
+	public Optional<Book> findByIsbn(String isbn) {
+		JsonNode root;
+		try {
+			RestClient.RequestHeadersSpec<?> request = apiKey.isEmpty()
+					? restClient.get().uri("/volumes?q=isbn:{isbn}", isbn)
+					: restClient.get().uri("/volumes?q=isbn:{isbn}&key={key}", isbn, apiKey);
+			root = request.retrieve().body(JsonNode.class);
+		} catch (RestClientException e) {
+			// 把原因印在後端主控台（例如 429 Too Many Requests、timed out），方便除錯。
+			// 錯誤訊息裡可能含有完整網址，所以先把金鑰遮掉，避免金鑰出現在紀錄檔裡
+			log.warn("Google Books 查詢失敗（ISBN {}）：{}", isbn, maskKey(e.getMessage(), apiKey));
+			throw new GoogleBooksUnavailableException(e);
+		}
+		return toBook(isbn, root);
+	}
+
+	/** 把文字裡的金鑰換成 ***（package 層級可見，方便單元測試） */
+	static String maskKey(String text, String key) {
+		if (text == null || key == null || key.isEmpty()) {
+			return text;
+		}
+		return text.replace(key, "***");
+	}
+
+	/**
+	 * 把 Google 回傳的 JSON 轉成 Book。（package 層級可見，方便單元測試直接呼叫）
+	 *
+	 * Google 回傳的 JSON 大概長這樣（只列出我們用到的部分）：
+	 * {
+	 *   "totalItems": 1,
+	 *   "items": [
+	 *     { "volumeInfo": { "title": "書名", "subtitle": "副標題",
+	 *                       "authors": ["作者甲", "作者乙"], "publishedDate": "2020-05" } }
+	 *   ]
+	 * }
+	 */
+	static Optional<Book> toBook(String isbn, JsonNode root) {
+		if (root == null) {
+			return Optional.empty();
+		}
+		JsonNode items = root.path("items");
+		if (!items.isArray() || items.size() == 0) {
+			return Optional.empty(); // Google 也查不到
+		}
+
+		JsonNode info = items.path(0).path("volumeInfo");
+
+		// 書名只取 title，不含副標題（subtitle）
+		String title = text(info.path("title"));
+		if (title.isEmpty()) {
+			return Optional.empty(); // 沒有書名的資料不可靠，當作查不到
+		}
+
+		// 多位作者用「、」連接
+		List<String> authors = new ArrayList<>();
+		for (JsonNode author : info.path("authors")) {
+			String name = text(author);
+			if (!name.isEmpty()) {
+				authors.add(name);
+			}
+		}
+
+		// 出版日期照原樣（可能是 "2020"、"2020-05" 或 "2020-05-01"）
+		String publishDate = text(info.path("publishedDate"));
+
+		// 長度不超過資料表欄位上限，避免存檔失敗
+		return Optional.of(new Book(isbn, limit(title, 255), limit(String.join("、", authors), 255),
+				limit(publishDate, 20)));
+	}
+
+	/** 超過長度就截斷 */
+	private static String limit(String value, int maxLength) {
+		return value.length() > maxLength ? value.substring(0, maxLength) : value;
+	}
+
+	/** 取出文字；欄位不存在或是 null 時回傳空字串 */
+	private static String text(JsonNode node) {
+		if (node.isMissingNode() || node.isNull()) {
+			return "";
+		}
+		return node.asString().trim();
+	}
+}
+```
+
+**和步驟 3 比，改了哪些地方**
+| 地方 | 步驟 3 | 步驟 12 |
+|---|---|---|
+| 建構子 | 只接 `RestClient.Builder`，自己建立 `SimpleClientHttpRequestFactory` 設定逾時 | 多接一個 `@Value` 讀進來的 `apiKey`；逾時交給設定檔 |
+| 送出請求 | 固定 `/volumes?q=isbn:{isbn}` | 有金鑰時是 `/volumes?q=isbn:{isbn}&key={key}` |
+| 錯誤紀錄 | 直接印 `e.getMessage()` | 先用 `maskKey()` 把金鑰換成 `***` 再印 |
+
+**白話解釋**
+- **為什麼要遮罩金鑰？** 連線失敗時，錯誤訊息長得像 `I/O error on GET request for "https://...&key=你的金鑰"`，會把完整網址連同金鑰一起印出來。紀錄檔常常被複製、貼到網路上問問題，金鑰就可能這樣外流。
+- `RestClient.RequestHeadersSpec<?> request = 條件 ? A : B;`：**三元運算子**，「條件成立用 A，否則用 B」。這裡用來決定網址要不要帶金鑰。
+- `{key}` 一樣用佔位符號，RestClient 會自動處理特殊字元，不用自己把金鑰接到字串裡。
+- 為什麼逾時要搬到設定檔？除了好調整，還有一個原因：步驟 3 的寫法在建構子裡呼叫 `builder.requestFactory(...)`，會把測試接上的「假 Google」覆蓋掉，測試就會真的連到網路上。
+
+### 12-4 測試：GoogleBooksClientHttpTest.java
+
+**`backend/src/test/java/com/wabisabi/library/client/GoogleBooksClientHttpTest.java`**
+
+```java
+package com.wabisabi.library.client;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
+import java.util.Optional;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
+
+import com.wabisabi.library.entity.Book;
+
+/**
+ * 單元測試：GoogleBooksClient 實際送出的請求（網址、金鑰）與錯誤處理。
+ * MockRestServiceServer 是「假的 Google」：不連網，由測試決定它要回什麼。
+ */
+class GoogleBooksClientHttpTest {
+
+	private static final String ISBN = "9780306406157";
+	private static final String BASE = "https://www.googleapis.com/books/v1/volumes?q=isbn:" + ISBN;
+	private static final String ONE_BOOK_JSON = """
+			{"totalItems": 1, "items": [{"volumeInfo": {"title": "測試書", "authors": ["某人"], "publishedDate": "2004"}}]}
+			""";
+
+	/** 建立一個「接到假 Google」的 GoogleBooksClient */
+	private record Setup(GoogleBooksClient client, MockRestServiceServer server) {
+	}
+
+	private Setup setup(String apiKey) {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		return new Setup(new GoogleBooksClient(builder, apiKey), server);
+	}
+
+	@Test
+	@DisplayName("有設定金鑰時，網址會加上 &key=金鑰")
+	void sendsApiKeyWhenConfigured() {
+		Setup s = setup("TEST_KEY");
+		s.server().expect(requestTo(BASE + "&key=TEST_KEY"))
+				.andExpect(method(HttpMethod.GET))
+				.andRespond(withSuccess(ONE_BOOK_JSON, MediaType.APPLICATION_JSON));
+
+		Optional<Book> book = s.client().findByIsbn(ISBN);
+
+		assertThat(book).isPresent();
+		assertThat(book.get().getTitle()).isEqualTo("測試書");
+		s.server().verify(); // 確認真的送出了上面預期的請求
+	}
+
+	@Test
+	@DisplayName("沒有設定金鑰時，網址不帶 key 參數")
+	void noApiKeyWhenBlank() {
+		Setup s = setup("   ");
+		s.server().expect(requestTo(BASE))
+				.andRespond(withSuccess(ONE_BOOK_JSON, MediaType.APPLICATION_JSON));
+
+		assertThat(s.client().findByIsbn(ISBN)).isPresent();
+		s.server().verify();
+	}
+
+	@Test
+	@DisplayName("Google 查無資料（totalItems 0）→ 回傳空的 Optional")
+	void googleHasNoSuchBook() {
+		Setup s = setup("TEST_KEY");
+		s.server().expect(requestTo(BASE + "&key=TEST_KEY"))
+				.andRespond(withSuccess("{\"totalItems\": 0}", MediaType.APPLICATION_JSON));
+
+		assertThat(s.client().findByIsbn(ISBN)).isEmpty();
+	}
+
+	@Test
+	@DisplayName("Google 回 429（額度用完）→ 丟出 GoogleBooksUnavailableException")
+	void quotaExceeded() {
+		Setup s = setup("TEST_KEY");
+		s.server().expect(requestTo(BASE + "&key=TEST_KEY"))
+				.andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+
+		assertThatThrownBy(() -> s.client().findByIsbn(ISBN))
+				.isInstanceOf(GoogleBooksUnavailableException.class);
+	}
+
+	@Test
+	@DisplayName("紀錄錯誤時會把金鑰遮成 ***")
+	void maskKeyHidesSecret() {
+		String message = "I/O error on GET request for \"https://www.googleapis.com/books/v1/volumes?q=isbn:1&key=SECRET123\"";
+
+		assertThat(GoogleBooksClient.maskKey(message, "SECRET123"))
+				.doesNotContain("SECRET123")
+				.contains("key=***");
+		// 沒有金鑰時原樣回傳
+		assertThat(GoogleBooksClient.maskKey(message, "")).isEqualTo(message);
+	}
+}
+```
+
+**白話解釋**
+- `MockRestServiceServer.bindTo(builder).build()`：把假 Google 接在 builder 上。之後用這個 builder 建出來的 client，送出的請求都會被假 Google 接住。
+- `expect(requestTo(網址))`：「我預期程式會送出這個網址」。網址不一樣（例如少了 `&key=TEST_KEY`），測試就會失敗。
+- `andRespond(withSuccess(...))` / `withStatus(429)`：假 Google 要回的內容。
+- `server.verify()`：確認預期的請求**真的有送出**。
+- `record Setup(...)`：Java 16 起的「紀錄類別」，一行就能定義一個只裝資料的小類別，這裡用來把 client 和 server 一起回傳。
+- 這裡用的 `TEST_KEY`、`SECRET123` 都是假的文字，不是真的金鑰。
+
+### 12-5 申請金鑰並設定（你自己操作）
+
+> Google Cloud 的畫面偶爾會改版，按鈕名稱可能和下面略有不同，照意思找就可以。
+
+1. 打開 <https://console.cloud.google.com/>，用你的 Google 帳號登入。第一次使用會要你同意服務條款，請自己閱讀後決定。
+2. **建立專案**：畫面左上角的專案選單 →「新增專案」→ 名稱填 `library-wabisabi` →「建立」→ 建好後切換到這個專案。
+3. **啟用 Books API**：左側選單「API 和服務」→「程式庫」→ 搜尋 `Books API` → 點進去 →「啟用」。
+4. **建立金鑰**：「API 和服務」→「憑證」→「建立憑證」→「API 金鑰」→ 畫面會顯示一串金鑰，先複製起來。
+5. **限制金鑰（建議）**：在憑證列表點剛建立的金鑰 →「API 限制」選「限制金鑰」→ 只勾選 `Books API` →「儲存」。這樣就算金鑰外流，別人也只能拿它查書。「應用程式限制」先選「無」，因為是你電腦上的後端在呼叫。
+6. **填進設定檔**：打開 `backend/src/main/resources/application-local.properties`，在最後加一行（等號後面直接接金鑰，不要加引號或空白）：
+   ```properties
+   google.books.api-key=你的金鑰
+   ```
+7. **重新啟動後端**：設定檔只在啟動時讀取，改完一定要重開。
+
+> Books API 一般不需要綁定信用卡就能使用預設額度。如果畫面要求你「啟用帳單」或輸入付款資訊，請先停下來，不需要為這個作業付費。
+
+**金鑰的安全守則**
+- 只放在 `application-local.properties`，這個檔案已被 `.gitignore` 排除。
+- 不要貼到聊天室、截圖、報告簡報或程式碼裡。
+- 如果懷疑金鑰外流：回到「憑證」頁面把它刪掉，再建立一把新的。
+
+### 對應的 Scenario
+| BDD Scenario | 狀態 |
+|---|---|
+| 本機沒有但 Google Books 有收錄的書籍，可查詢並存回本機 | ✅ 後端 Mock 測試；🔸 設定金鑰後，照 MANUAL_TEST.md 3.2 手動測試 |
+| 輸入無效或不存在的 ISBN 碼：9780000000000 → 找不到此書籍 | ✅ 後端 Mock 測試；🔸 設定金鑰後，照 MANUAL_TEST.md 3.3 手動測試 |
+| 本機沒有且 Google Books 無法連線時顯示錯誤 | ✅ 後端測試（`GoogleBooksClientHttpTest.quotaExceeded`、`BookApiTest.googleUnavailable`） |
+
+### 怎麼驗證成功
+
+**驗證 1：跑測試（不需要金鑰）**
+```bash
+cd backend
+./mvnw test
+```
+實測結果（2026-10-19）：共 **54** 個測試全部通過（新增 `GoogleBooksClientHttpTest` 5 個）。
+
+**驗證 2：沒有金鑰時行為不變**（2026-10-19 實測）
+- 查本機的 `9789861343722`：200，正常顯示。
+- 查本機沒有的 `9780134685991`：503「查詢失敗，請稍後再試」，後端主控台印出 `429 Too Many Requests`，和設定金鑰之前一樣。
+
+**驗證 3：設定金鑰後（你自己測）**
+1. 先單獨確認金鑰可用（把 `你的金鑰` 換掉；這行指令會留在終端機歷史紀錄裡，不要截圖分享）：
+   ```bash
+   curl "https://www.googleapis.com/books/v1/volumes?q=isbn:9780134685991&key=你的金鑰"
+   ```
+   回傳一大段 JSON、裡面有 `"title"` 就是成功。
+2. 重新啟動後端，照 `MANUAL_TEST.md` 的 3.2、3.3 測試：
+   - `9780134685991`：顯示 Google 的書籍資料；用 MySQL Workbench 查 `SELECT * FROM books;` 會多出這本書。
+   - `9780000000000`：紅框「⚠ 錯誤提示：找不到此書籍」。
+
+**實測結果（2026-10-19，設定金鑰後）**
+| 測試 | 結果 |
+|---|---|
+| 金鑰是否有效 | ✅ Google 不再回 429；用書名查詢（`q=intitle:clean code`）可以查到 Clean Code |
+| 我們的請求網址 | ✅ 實際送出 `.../volumes?q=isbn:9780132350884&key=***`，`isbn:` 沒有被編碼 |
+| `isbn:` 查詢 | ⚠️ 測試的 8 本書（Clean Code、Harry Potter、Effective Java、本專案的種子書…），ISBN-13 與 ISBN-10 都回 `{"totalItems":0}`；加上 `country=TW` 也一樣 |
+| 改用純數字查詢再比對 ISBN | ⚠️ 回傳的都是不相關的書，沒有任何一本 ISBN 完全相符 |
+| 畫面結果 | 本機沒有的書一律顯示「找不到此書籍」（404），程式行為正確 |
+
+結論：**金鑰與程式都正常，是 Google Books 的 `isbn:` 搜尋本身查不到資料**，無法從我們這邊修正。可能是 Google 端暫時性的問題，也可能和地區有關，目前沒有找到官方說明。之後可以定期用下面的指令重測（把 `你的金鑰` 換掉）：
+```bash
+curl "https://www.googleapis.com/books/v1/volumes?q=isbn:9780134685991&key=你的金鑰"
+```
+回傳的 JSON 裡有 `"title"` 就代表 Google 恢復了；仍是 `"totalItems": 0` 就是還沒。
+
+**常見錯誤**
+| 症狀 | 原因與處理 |
+|---|---|
+| curl 回 `400`，訊息有 `API key not valid` | 金鑰複製錯了，或前後多了空白 |
+| curl 回 `403`，訊息有 `Books API has not been used in project ... or it is disabled` | 步驟 3 的「啟用 Books API」還沒做；剛啟用的話等幾分鐘再試 |
+| curl 正常，但網站還是「查詢失敗，請稍後再試」，主控台有 `429` | 後端沒有讀到金鑰：確認設定名稱拼對（`google.books.api-key`）、檔案已存檔，而且有**重新啟動**後端 |
+| 主控台有 `403` | 金鑰的「API 限制」沒有勾選 Books API |
 
 ---
 
@@ -6467,7 +6893,7 @@ npm run build
 
 1. **準備環境**（只需要做一次）
    - JDK 21、Node.js 24、MySQL 8.0、Eclipse（2023-12 以上）。
-   - 照步驟 1-5 建好 `library` 資料庫和專用帳號，再把 `application-local.properties.example` 複製成 `application-local.properties` 並填好。
+   - 照步驟 1-5 建好 `library` 資料庫和專用帳號，再把 `application-local.properties.example` 複製成 `application-local.properties` 並填好（包含步驟 12 的 Google Books API 金鑰）。
 2. **每天開工的兩個指令**（兩個終端機視窗）
    ```bash
    cd backend
@@ -6539,7 +6965,7 @@ npm run build
 | 前端呼叫 API 全部失敗 | 後端有沒有啟動？`vite.config.js` 的 proxy 有沒有設？ |
 | 登入成功，但下一個請求又變成未登入 | 是不是直接打 `localhost:8080`？要透過 `localhost:5173`，Cookie 才會共用 |
 | 網路教學的程式碼貼上後「找不到類別」 | 對照開頭的「Spring Boot 4.x 與網路教學（3.x）的差異」表 |
-| 查書一直「查詢失敗，請稍後再試」 | 後端主控台若有 `429 Too Many Requests`，是 Google 匿名額度用完了，不是程式錯誤 |
+| 查書一直「查詢失敗，請稍後再試」 | 後端主控台若有 `429 Too Many Requests`：檢查 `application-local.properties` 有沒有填 `google.books.api-key`（見步驟 12），填了之後要重新啟動後端 |
 | 改了 Java 程式但沒效果 | 後端要重新啟動（`Ctrl + C` 後再 `./mvnw spring-boot:run`）；前端存檔會自動更新 |
 
 ### 五、做完一遍之後，可以試試的小練習

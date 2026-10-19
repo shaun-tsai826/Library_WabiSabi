@@ -1,9 +1,13 @@
 # 使用方式：
 # 1. 複製這個檔案，改名為 application-local.properties（放在同一個資料夾）
-# 2. 填入你自己的資料庫連線資訊
+# 2. 填入你自己的資料庫連線資訊與 Google Books API 金鑰
 # 3. application-local.properties 已列在 .gitignore，不會被提交到 git
 #
 # 網址範例：jdbc:mysql://localhost:3306/library?serverTimezone=Asia/Taipei
 spring.datasource.url=
 spring.datasource.username=
 spring.datasource.password=
+
+# Google Books API 金鑰（申請方式見 documents/STEPS.md 步驟 12）
+# 留空也能啟動，但查詢本機沒有的書時，Google 會回 429，畫面顯示「查詢失敗，請稍後再試」
+google.books.api-key=
