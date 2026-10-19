@@ -14,6 +14,9 @@ frontend/dist/
 # Vite 偶爾產生的暫存檔、個人環境變數檔
 frontend/*.timestamp-*.mjs
 frontend/.env.local
+# 用 Eclipse 匯入前端時自動產生的個人設定檔
+frontend/.project
+frontend/.settings/
 
 # ===== 作業系統與編輯器 =====
 .DS_Store
