@@ -78,14 +78,14 @@ class GoogleBooksClientHttpTest {
 	}
 
 	@Test
-	@DisplayName("Google 回 429（額度用完）→ 丟出 GoogleBooksUnavailableException")
+	@DisplayName("Google 回 429（額度用完）→ 丟出 BookSourceUnavailableException")
 	void quotaExceeded() {
 		Setup s = setup("TEST_KEY");
 		s.server().expect(requestTo(BASE + "&key=TEST_KEY"))
 				.andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
 
 		assertThatThrownBy(() -> s.client().findByIsbn(ISBN))
-				.isInstanceOf(GoogleBooksUnavailableException.class);
+				.isInstanceOf(BookSourceUnavailableException.class);
 	}
 
 	@Test

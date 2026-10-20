@@ -1,6 +1,6 @@
 # STEPS.md：LIBRARY / 侘寂書閣 開發步驟紀錄
 
-> 對應文件：BDD.md v1.1.0、DESIGN.md v1.1.0、PROMPT.md v1.3.0
+> 對應文件：BDD.md v1.2.0（步驟 13 起；步驟 0～12 對應 v1.1.0）、DESIGN.md v1.1.0、PROMPT.md v1.3.0
 > 這份文件記錄每一步「做了什麼、為什麼這樣做、怎麼確認成功」。照著從頭做一遍，就能自己重建整個專案。
 
 ---
@@ -22,6 +22,7 @@
 - [步驟 10：個人頁與登出](#步驟-10個人頁與登出)
 - [步驟 11：總驗收與手動測試清單](#步驟-11總驗收與手動測試清單)
 - [步驟 12：Google Books API 金鑰](#步驟-12google-books-api-金鑰)
+- [步驟 13：Open Library 備援資料來源（BDD v1.2.0）](#步驟-13open-library-備援資料來源bdd-v120)
 - [如何快速上手](#如何快速上手)
 
 ---
@@ -6880,6 +6881,862 @@ curl "https://www.googleapis.com/books/v1/volumes?q=isbn:9780134685991&key=你�
 | curl 回 `403`，訊息有 `Books API has not been used in project ... or it is disabled` | 步驟 3 的「啟用 Books API」還沒做；剛啟用的話等幾分鐘再試 |
 | curl 正常，但網站還是「查詢失敗，請稍後再試」，主控台有 `429` | 後端沒有讀到金鑰：確認設定名稱拼對（`google.books.api-key`）、檔案已存檔，而且有**重新啟動**後端 |
 | 主控台有 `403` | 金鑰的「API 限制」沒有勾選 Books API |
+
+---
+
+## 步驟 13：Open Library 備援資料來源（BDD v1.2.0）
+
+### 為什麼需要這一步
+步驟 12 設定好 API 金鑰後發現，Google Books 的 `isbn:` 搜尋對測試的每一本書都回 0 筆（金鑰本身沒問題，是 Google 那邊查不到）。為了讓網站真的查得到書，加入 **Open Library**（免費、不需要金鑰）當作備援來源。
+
+這也是第一次照「**先改規格、再開分支、最後寫程式**」的流程新增功能：
+
+| 順序 | 做什麼 | commit |
+|---|---|---|
+| 1 | 開分支 `feature/open-library-fallback` | — |
+| 2 | 修改 `BDD.md` 為 v1.2.0（先把規則寫清楚，當作驗收標準） | `4fb9415` |
+| 3 | 後端程式＋測試 | `049379b` |
+| 4 | 實測（MySQL＋瀏覽器） | — |
+| 5 | 文件（本節與 MANUAL_TEST.md） | 本次 |
+
+> 這一步改變了提示詞的設計決策 1（書籍來源）。PROMPT.md 由你自己維護，記得更新版本紀錄。
+
+### 名詞先解釋
+- **分支（branch）**：把專案「複製一條平行的時間線」。在分支上怎麼改都不會影響 `main`，確認沒問題再合併回去。比喻：在草稿紙上試算，算對了才抄到考卷上。
+  ```bash
+  git switch -c feature/open-library-fallback   # 建立並切換到新分支
+  git branch --show-current                      # 確認現在在哪個分支
+  ```
+- **備援（fallback）**：主要的方法失敗時，改用的備用方法。像手機沒訊號時改連 Wi-Fi。
+- **User-Agent**：每個 HTTP 請求都會帶的「自我介紹」標頭，告訴對方「我是誰」。瀏覽器會寫 `Mozilla/5.0 ...`；Open Library 希望程式呼叫時寫上自己的名字，方便他們辨識流量。
+
+### BDD v1.2.0 的規則（重點）
+```
+本機 books 表 → Google Books → Open Library
+  - 任一來源查到：顯示並存回本機，之後的來源不再查詢
+  - 所有外部來源都明確查無：「找不到此書籍」（404）
+  - 任一外部來源無法使用、且都沒查到：「查詢失敗，請稍後再試」（503）
+```
+為什麼「一個查無、一個連不上」要回「查詢失敗」？因為連不上的那個來源**可能有這本書**，直接說「找不到」不夠準確。
+
+### Open Library 實測觀察（2026-10-19）
+| ISBN | Open Library 回傳 | 說明 |
+|---|---|---|
+| 9780132350884 | Clean Code / Robert C. Martin / `July 2008` | Google 查不到的西文書，它查得到 |
+| 9780439708180 | Harry Potter and the sorcerer's stone / J. K. Rowling / `1999` | |
+| 9789861343722（種子書） | 查無 | 中文書收錄得少 |
+| 9789863980315（種子書） | 「The Recess Queen (Chinese Edition)」 | **資料是錯的**；種子書在本機就查得到，所以不受影響 |
+| 9780000000000 | 「Bertrand Barère」 | 原本 BDD 的「找不到」範例，所以 v1.2.0 改用 `9789999999999` |
+
+- 出版日期是英文的自由格式（`July 2008`、`December 27, 2017`），照原樣存放與顯示（與 Google 的規則一致）。
+- 回應時間 0.7～4.7 秒，所以讀取逾時從 5 秒調成 10 秒。
+
+### 建立或修改的檔案
+```
+documents/BDD.md                                                    修改：v1.2.0
+backend/src/main/java/com/wabisabi/library/client/
+├── GoogleBooksUnavailableException.java → BookSourceUnavailableException.java   改名：兩個來源共用
+├── OpenLibraryClient.java                                                         新增
+└── GoogleBooksClient.java                                                         修改：改用新的例外名稱
+backend/src/main/java/com/wabisabi/library/service/BookService.java  修改：本機 → Google → Open Library
+backend/src/main/resources/application.properties                    修改：讀取逾時 10 秒
+backend/src/test/java/com/wabisabi/library/
+├── BookApiTest.java                                                 修改：模擬 Open Library、新增 4 個 Scenario 測試
+└── client/
+    ├── GoogleBooksClientHttpTest.java                               修改：改用新的例外名稱
+    ├── OpenLibraryClientTest.java                                   新增：6 個測試
+    └── OpenLibraryClientHttpTest.java                               新增：3 個測試
+```
+
+### 13-1 共用的例外：BookSourceUnavailableException.java
+
+**`backend/src/main/java/com/wabisabi/library/client/BookSourceUnavailableException.java`**
+
+```java
+package com.wabisabi.library.client;
+
+/**
+ * 外部書籍來源（Google Books、Open Library）無法使用：
+ * 連不上、逾時、回傳錯誤狀態碼（例如 429 查詢太頻繁）或回傳內容看不懂。
+ * BookService 接到它之後，會改查下一個來源；所有來源都沒查到時，回給前端「查詢失敗，請稍後再試」（503）。
+ */
+public class BookSourceUnavailableException extends RuntimeException {
+
+	/**
+	 * @param source 來源名稱，例如 "Google Books"、"Open Library"
+	 * @param cause  原本的錯誤
+	 */
+	public BookSourceUnavailableException(String source, Throwable cause) {
+		super(source + " 無法使用", cause);
+	}
+}
+```
+
+**白話解釋**
+- 原本叫 `GoogleBooksUnavailableException`，現在有兩個外部來源，改成通用的名字，並多一個 `source` 參數記錄是哪個來源出問題。
+- 改名用 `git mv`，git 會記得這是「同一個檔案改名」，歷史紀錄不會斷掉：
+  ```bash
+  git mv 舊檔名.java 新檔名.java
+  ```
+- `GoogleBooksClient` 只改了一行：`throw new BookSourceUnavailableException("Google Books", e);`（其餘和步驟 12 相同）。
+
+### 13-2 Open Library 客戶端：OpenLibraryClient.java
+
+**`backend/src/main/java/com/wabisabi/library/client/OpenLibraryClient.java`**
+
+```java
+package com.wabisabi.library.client;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+import com.wabisabi.library.entity.Book;
+
+import tools.jackson.databind.JsonNode;
+
+/**
+ * 呼叫 Open Library API，用 ISBN 查書（Google Books 查不到或無法使用時的備援來源）。
+ * 免費、不需要 API 金鑰。
+ *
+ * 呼叫的網址：https://openlibrary.org/api/books?bibkeys=ISBN:9780132350884&format=json&jscmd=data
+ * 逾時時間與 Google Books 共用 application.properties 的 spring.http.clients.* 設定。
+ */
+@Component
+public class OpenLibraryClient {
+
+	private static final Logger log = LoggerFactory.getLogger(OpenLibraryClient.class);
+
+	/** Open Library 希望呼叫的程式在 User-Agent 標頭寫上自己的名字，方便他們辨識流量 */
+	static final String USER_AGENT = "LibraryWabiSabi/1.0 (student project)";
+
+	private final RestClient restClient;
+
+	public OpenLibraryClient(RestClient.Builder builder) {
+		this.restClient = builder
+				.baseUrl("https://openlibrary.org")
+				.defaultHeader(HttpHeaders.USER_AGENT, USER_AGENT)
+				.build();
+	}
+
+	/**
+	 * 用 ISBN 查書。
+	 *
+	 * @return 查到 → 裝著 Book 的 Optional；Open Library 沒有這本書 → 空的 Optional
+	 * @throws BookSourceUnavailableException Open Library 無法使用時
+	 */
+	public Optional<Book> findByIsbn(String isbn) {
+		JsonNode root;
+		try {
+			root = restClient.get()
+					.uri("/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data", isbn)
+					.retrieve()
+					.body(JsonNode.class);
+		} catch (RestClientException e) {
+			log.warn("Open Library 查詢失敗（ISBN {}）：{}", isbn, e.getMessage());
+			throw new BookSourceUnavailableException("Open Library", e);
+		}
+		return toBook(isbn, root);
+	}
+
+	/**
+	 * 把 Open Library 回傳的 JSON 轉成 Book。（package 層級可見，方便單元測試直接呼叫）
+	 *
+	 * 查到時的 JSON 大概長這樣（只列出我們用到的部分）；查不到時是空的 {}：
+	 * {
+	 *   "ISBN:9780132350884": {
+	 *     "title": "Clean Code",
+	 *     "subtitle": "A Handbook of Agile Software Craftsmanship",
+	 *     "authors": [ { "name": "Robert C. Martin" } ],
+	 *     "publish_date": "July 2008"
+	 *   }
+	 * }
+	 */
+	static Optional<Book> toBook(String isbn, JsonNode root) {
+		if (root == null) {
+			return Optional.empty();
+		}
+		// 外層的欄位名稱就是我們送出的 "ISBN:xxxx"
+		JsonNode data = root.path("ISBN:" + isbn);
+		if (data.isMissingNode() || data.isNull()) {
+			return Optional.empty(); // Open Library 也查不到
+		}
+
+		// 書名只取 title，不含副標題（subtitle），規則與 Google Books 相同
+		String title = text(data.path("title"));
+		if (title.isEmpty()) {
+			return Optional.empty(); // 沒有書名的資料不可靠，當作查不到
+		}
+
+		// 多位作者用「、」連接；Open Library 的作者是 [{ "name": "..." }] 的格式
+		List<String> authors = new ArrayList<>();
+		for (JsonNode author : data.path("authors")) {
+			String name = text(author.path("name"));
+			if (!name.isEmpty()) {
+				authors.add(name);
+			}
+		}
+
+		// 出版日期照原樣（可能是 "1999"、"July 2008"、"December 27, 2017"）
+		String publishDate = text(data.path("publish_date"));
+
+		// 長度不超過資料表欄位上限，避免存檔失敗
+		return Optional.of(new Book(isbn, limit(title, 255), limit(String.join("、", authors), 255),
+				limit(publishDate, 20)));
+	}
+
+	/** 超過長度就截斷 */
+	private static String limit(String value, int maxLength) {
+		return value.length() > maxLength ? value.substring(0, maxLength) : value;
+	}
+
+	/** 取出文字；欄位不存在或是 null 時回傳空字串 */
+	private static String text(JsonNode node) {
+		if (node.isMissingNode() || node.isNull()) {
+			return "";
+		}
+		return node.asString().trim();
+	}
+}
+```
+
+**白話解釋**
+- 結構和 `GoogleBooksClient` 幾乎一樣：`findByIsbn` 負責連線、`toBook` 負責把 JSON 轉成 `Book`。看懂其中一個，另一個就懂了。
+- `.defaultHeader(HttpHeaders.USER_AGENT, USER_AGENT)`：之後用這個 `restClient` 送出的每個請求，都會自動帶上這個標頭。這裡只寫程式名稱，**不放個人的 email**。
+- `root.path("ISBN:" + isbn)`：Open Library 回傳的 JSON 最外層，是用我們送出的 `ISBN:xxxx` 當欄位名稱。查不到時整個回應是空的 `{}`，`path` 會拿到「空節點」，所以判斷成查無。
+- 作者的格式是 `[{ "name": "..." }]`，每個作者是一個物件，所以要多走一層 `author.path("name")`。Google 的作者則是字串陣列 `["..."]`。
+- 為什麼 `text()`、`limit()` 這兩個小方法和 `GoogleBooksClient` 重複？刻意的：各 3～5 行，讓每個類別自己完整好讀，不用跳到別的檔案看。
+
+### 13-3 查書規則：BookService.java（修改後全文）
+
+**`backend/src/main/java/com/wabisabi/library/service/BookService.java`**
+
+```java
+package com.wabisabi.library.service;
+
+import java.util.Optional;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+
+import com.wabisabi.library.client.BookSourceUnavailableException;
+import com.wabisabi.library.client.GoogleBooksClient;
+import com.wabisabi.library.client.OpenLibraryClient;
+import com.wabisabi.library.common.Messages;
+import com.wabisabi.library.dto.BookResponse;
+import com.wabisabi.library.entity.Book;
+import com.wabisabi.library.exception.ApiException;
+import com.wabisabi.library.repository.BookRepository;
+
+/**
+ * 書籍查詢的規則都在這裡。
+ */
+@Service
+public class BookService {
+
+	private final BookRepository bookRepository;
+	private final GoogleBooksClient googleBooksClient;
+	private final OpenLibraryClient openLibraryClient;
+
+	public BookService(BookRepository bookRepository, GoogleBooksClient googleBooksClient,
+			OpenLibraryClient openLibraryClient) {
+		this.bookRepository = bookRepository;
+		this.googleBooksClient = googleBooksClient;
+		this.openLibraryClient = openLibraryClient;
+	}
+
+	/**
+	 * 用 ISBN 查書。順序（BDD v1.2.0）：
+	 * 1. 去除前後空白，檢查是不是空的、是不是 13 碼數字
+	 * 2. 先查本機 books 表，有就直接回傳
+	 * 3. 本機沒有 → 問 Google Books；查到就存回本機再回傳
+	 * 4. Google 查無或無法使用 → 問 Open Library；查到就存回本機再回傳
+	 * 5. 都沒查到：
+	 *    - 兩個來源都明確回答「查無」→ 404 找不到此書籍
+	 *    - 有任一來源無法使用 → 503 查詢失敗，請稍後再試（無法使用的那個來源可能有這本書）
+	 */
+	public BookResponse findByIsbn(String rawIsbn) {
+		// 1. 格式檢查（正常情況前端已經擋掉空白，這裡是第二道防線）
+		String isbn = normalizeIsbn(rawIsbn);
+
+		// 2. 先查本機
+		Optional<Book> localBook = bookRepository.findById(isbn);
+		if (localBook.isPresent()) {
+			return new BookResponse(localBook.get());
+		}
+
+		// 記錄「有沒有哪個外部來源無法使用」，決定最後要回 404 還是 503
+		boolean anySourceUnavailable = false;
+
+		// 3. 問 Google Books
+		try {
+			Optional<Book> googleBook = googleBooksClient.findByIsbn(isbn);
+			if (googleBook.isPresent()) {
+				return saveAndRespond(googleBook.get()); // 查到了就不用再問 Open Library
+			}
+		} catch (BookSourceUnavailableException e) {
+			anySourceUnavailable = true; // 連不上沒關係，繼續問下一個來源
+		}
+
+		// 4. 問 Open Library
+		try {
+			Optional<Book> openLibraryBook = openLibraryClient.findByIsbn(isbn);
+			if (openLibraryBook.isPresent()) {
+				return saveAndRespond(openLibraryBook.get());
+			}
+		} catch (BookSourceUnavailableException e) {
+			anySourceUnavailable = true;
+		}
+
+		// 5. 都沒查到
+		if (anySourceUnavailable) {
+			throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, Messages.BOOK_LOOKUP_FAILED);
+		}
+		throw new ApiException(HttpStatus.NOT_FOUND, Messages.BOOK_NOT_FOUND);
+	}
+
+	/** 存回本機（下次就不用再問外部來源），再轉成回應 */
+	private BookResponse saveAndRespond(Book book) {
+		Book saved = bookRepository.save(book);
+		return new BookResponse(saved);
+	}
+
+	/**
+	 * ISBN 格式規則（查書與加入收藏共用）：去除前後空白後，必須是 13 碼數字。
+	 *
+	 * @return 去除空白後的 ISBN
+	 * @throws ApiException 空白或格式錯誤時（400）
+	 */
+	public static String normalizeIsbn(String rawIsbn) {
+		String isbn = (rawIsbn == null) ? "" : rawIsbn.trim();
+		if (isbn.isEmpty()) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, Messages.ISBN_REQUIRED);
+		}
+		if (!isbn.matches("[0-9]{13}")) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, Messages.ISBN_INVALID);
+		}
+		return isbn;
+	}
+}
+```
+
+**白話解釋**
+- **`anySourceUnavailable` 旗標**：一張「有沒有人沒接電話」的小紙條。哪個來源連不上，就在紙條上打勾；最後都沒查到時，看紙條決定回 503（有人沒接）還是 404（大家都說沒有）。
+- **兩段 try 是分開的**：Google 丟出例外時，只會跳到 Google 那段的 `catch`，程式會繼續往下問 Open Library。如果把兩個來源包在同一個 try 裡，Google 一出錯就直接跳過 Open Library 了。
+- **查到就 `return`**：`return` 會立刻結束整個方法，所以 Google 查到時，下面問 Open Library 的程式根本不會執行，符合 BDD「系統不需再查詢 Open Library」。
+- `saveAndRespond()`：「存回本機再回傳」原本在一個地方，現在兩個來源都要用，抽成一個小方法。
+
+### 13-4 逾時設定：application.properties（修改後全文）
+
+**`backend/src/main/resources/application.properties`**
+
+```properties
+# ===== 基本設定 =====
+spring.application.name=library
+# 後端埠號（Vite 開發伺服器會把 /api 轉到這裡）
+server.port=8080
+
+# 啟用 local 設定檔：Spring Boot 會額外讀取 application-local.properties
+# （資料庫網址、帳號、密碼放在那裡，不進 git）
+spring.profiles.active=local
+
+# ===== JPA 設定 =====
+# update：啟動時依照 Entity 類別自動建立／補上資料表欄位。
+# 注意：僅限練習使用！正式專案應改用 Flyway 等工具管理資料表變更。
+spring.jpa.hibernate.ddl-auto=update
+# 關閉 open-in-view：資料庫連線只在 Service 裡使用，避免新手踩到隱藏的效能問題
+spring.jpa.open-in-view=false
+# 想看 JPA 實際執行的 SQL 時，把下面改成 true
+spring.jpa.show-sql=false
+
+# ===== 呼叫外部網站（Google Books、Open Library）的逾時設定 =====
+# 連不上時最多等 3 秒、連上後最多等 10 秒，就放棄並改查下一個來源
+# （Open Library 實測有時要 4～5 秒才回應，所以讀取逾時設 10 秒）
+spring.http.clients.connect-timeout=3s
+spring.http.clients.read-timeout=10s
+
+# Google Books API 金鑰：真正的值放在 application-local.properties（不進 git），這裡只留空白預設值
+google.books.api-key=
+```
+
+- `spring.http.clients.read-timeout=10s`：兩個 Client 都是用 Spring 準備的 `RestClient.Builder` 建立，所以這個設定對兩者都有效。
+
+### 13-5 測試：BookApiTest.java（修改後全文）
+
+**`backend/src/test/java/com/wabisabi/library/BookApiTest.java`**
+
+```java
+package com.wabisabi.library;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.util.Optional;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import com.wabisabi.library.client.BookSourceUnavailableException;
+import com.wabisabi.library.client.GoogleBooksClient;
+import com.wabisabi.library.client.OpenLibraryClient;
+import com.wabisabi.library.entity.Book;
+import com.wabisabi.library.repository.BookRepository;
+
+/**
+ * 需求 1：首頁查詢書籍（GET /api/books/{isbn}）。
+ * Google Books 與 Open Library 都用 Mockito 模擬（@MockitoBean），測試時不會真的連網。
+ * 沒有特別設定時，模擬物件的 findByIsbn 會回傳空的 Optional（也就是「查無」）。
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+class BookApiTest {
+
+	/** Google Books 有收錄、但本機沒有的測試用 ISBN */
+	private static final String GOOGLE_ONLY_ISBN = "9780306406157";
+
+	/** 只有 Open Library 有收錄（本機與 Google 都沒有）的測試用 ISBN */
+	private static final String OPEN_LIBRARY_ONLY_ISBN = "9780132350884";
+
+	@Autowired
+	private MockMvc mockMvc;
+
+	@Autowired
+	private BookRepository bookRepository;
+
+	/** 用假的 GoogleBooksClient 取代真的，可以自由決定它要回傳什麼 */
+	@MockitoBean
+	private GoogleBooksClient googleBooksClient;
+
+	/** 用假的 OpenLibraryClient 取代真的（BDD v1.2.0 的備援來源） */
+	@MockitoBean
+	private OpenLibraryClient openLibraryClient;
+
+	@BeforeEach
+	void setUp() {
+		// 每個測試開始前，確保這些書不在本機（避免被上一個測試影響）
+		bookRepository.deleteById(GOOGLE_ONLY_ISBN);
+		bookRepository.deleteById(OPEN_LIBRARY_ONLY_ISBN);
+	}
+
+	@Test
+	@DisplayName("Scenario: 成功查詢到存在的書籍資訊")
+	void findExistingBook() throws Exception {
+		mockMvc.perform(get("/api/books/{isbn}", "9789861343722"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.isbn").value("9789861343722"))
+				.andExpect(jsonPath("$.title").value("侘寂：尋找日常中的不完美之美"))
+				.andExpect(jsonPath("$.author").value("雷納·克魯克"))
+				.andExpect(jsonPath("$.publishDate").value("2020-05-01"));
+
+		// 本機就有，不應該去問任何外部來源
+		verify(googleBooksClient, never()).findByIsbn(anyString());
+		verify(openLibraryClient, never()).findByIsbn(anyString());
+	}
+
+	@Test
+	@DisplayName("Scenario: 本機沒有但 Google Books 有收錄的書籍，可查詢並存回本機（出版日期只有年，照原樣顯示）")
+	void findBookFromGoogleAndSave() throws Exception {
+		when(googleBooksClient.findByIsbn(GOOGLE_ONLY_ISBN))
+				.thenReturn(Optional.of(new Book(GOOGLE_ONLY_ISBN, "Google 測試書", "作者甲、作者乙", "2004")));
+
+		mockMvc.perform(get("/api/books/{isbn}", GOOGLE_ONLY_ISBN))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.title").value("Google 測試書"))
+				.andExpect(jsonPath("$.author").value("作者甲、作者乙"))
+				.andExpect(jsonPath("$.publishDate").value("2004"));
+
+		// 應該已經存進本機 books 表
+		Book saved = bookRepository.findById(GOOGLE_ONLY_ISBN).orElseThrow();
+		assertThat(saved.getTitle()).isEqualTo("Google 測試書");
+		assertThat(saved.getPublishDate()).isEqualTo("2004");
+
+		// Google 查到了，系統不需再查詢 Open Library
+		verify(openLibraryClient, never()).findByIsbn(anyString());
+	}
+
+	@Test
+	@DisplayName("Scenario: 本機與 Google Books 都沒有、但 Open Library 有收錄的書籍，可查詢並存回本機（出版日期照原樣）")
+	void findBookFromOpenLibraryAndSave() throws Exception {
+		when(googleBooksClient.findByIsbn(OPEN_LIBRARY_ONLY_ISBN)).thenReturn(Optional.empty());
+		when(openLibraryClient.findByIsbn(OPEN_LIBRARY_ONLY_ISBN))
+				.thenReturn(Optional.of(new Book(OPEN_LIBRARY_ONLY_ISBN, "Clean Code", "Robert C. Martin", "July 2008")));
+
+		mockMvc.perform(get("/api/books/{isbn}", OPEN_LIBRARY_ONLY_ISBN))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.title").value("Clean Code"))
+				.andExpect(jsonPath("$.author").value("Robert C. Martin"))
+				.andExpect(jsonPath("$.publishDate").value("July 2008"));
+
+		Book saved = bookRepository.findById(OPEN_LIBRARY_ONLY_ISBN).orElseThrow();
+		assertThat(saved.getTitle()).isEqualTo("Clean Code");
+		assertThat(saved.getPublishDate()).isEqualTo("July 2008");
+	}
+
+	@Test
+	@DisplayName("Scenario: Google Books 無法連線但 Open Library 有收錄，仍可查詢")
+	void googleUnavailableButOpenLibraryHasBook() throws Exception {
+		when(googleBooksClient.findByIsbn(OPEN_LIBRARY_ONLY_ISBN))
+				.thenThrow(new BookSourceUnavailableException("Google Books", new RuntimeException("模擬連線失敗")));
+		when(openLibraryClient.findByIsbn(OPEN_LIBRARY_ONLY_ISBN))
+				.thenReturn(Optional.of(new Book(OPEN_LIBRARY_ONLY_ISBN, "Clean Code", "Robert C. Martin", "July 2008")));
+
+		mockMvc.perform(get("/api/books/{isbn}", OPEN_LIBRARY_ONLY_ISBN))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.title").value("Clean Code"));
+
+		assertThat(bookRepository.existsById(OPEN_LIBRARY_ONLY_ISBN)).isTrue();
+	}
+
+	@Test
+	@DisplayName("Scenario Outline: 本機沒有且外部來源無法確認時顯示錯誤 | Google 無法連線、Open Library 無法連線")
+	void bothSourcesUnavailable() throws Exception {
+		when(googleBooksClient.findByIsbn("9780000000001"))
+				.thenThrow(new BookSourceUnavailableException("Google Books", new RuntimeException("模擬連線失敗")));
+		when(openLibraryClient.findByIsbn("9780000000001"))
+				.thenThrow(new BookSourceUnavailableException("Open Library", new RuntimeException("模擬連線失敗")));
+
+		mockMvc.perform(get("/api/books/{isbn}", "9780000000001"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.message").value("查詢失敗，請稍後再試"))
+				.andExpect(jsonPath("$.title").doesNotExist());
+
+		assertThat(bookRepository.existsById("9780000000001")).isFalse();
+	}
+
+	@Test
+	@DisplayName("Scenario Outline: 本機沒有且外部來源無法確認時顯示錯誤 | Google 查無、Open Library 無法連線")
+	void googleNotFoundOpenLibraryUnavailable() throws Exception {
+		when(googleBooksClient.findByIsbn("9780000000001")).thenReturn(Optional.empty());
+		when(openLibraryClient.findByIsbn("9780000000001"))
+				.thenThrow(new BookSourceUnavailableException("Open Library", new RuntimeException("模擬連線失敗")));
+
+		mockMvc.perform(get("/api/books/{isbn}", "9780000000001"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.message").value("查詢失敗，請稍後再試"))
+				.andExpect(jsonPath("$.title").doesNotExist());
+	}
+
+	@Test
+	@DisplayName("Scenario Outline: 本機沒有且外部來源無法確認時顯示錯誤 | Google 無法連線、Open Library 查無")
+	void googleUnavailableOpenLibraryNotFound() throws Exception {
+		when(googleBooksClient.findByIsbn("9780000000001"))
+				.thenThrow(new BookSourceUnavailableException("Google Books", new RuntimeException("模擬連線失敗")));
+		when(openLibraryClient.findByIsbn("9780000000001")).thenReturn(Optional.empty());
+
+		mockMvc.perform(get("/api/books/{isbn}", "9780000000001"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.message").value("查詢失敗，請稍後再試"))
+				.andExpect(jsonPath("$.title").doesNotExist());
+	}
+
+	@Test
+	@DisplayName("Scenario Outline: 輸入無效或不存在的 ISBN 碼 | 9789999999999 → 找不到此書籍（兩個來源都查無）")
+	void bookNotFound() throws Exception {
+		when(googleBooksClient.findByIsbn("9789999999999")).thenReturn(Optional.empty());
+		when(openLibraryClient.findByIsbn("9789999999999")).thenReturn(Optional.empty());
+
+		mockMvc.perform(get("/api/books/{isbn}", "9789999999999"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.message").value("找不到此書籍"))
+				.andExpect(jsonPath("$.title").doesNotExist());
+	}
+
+	@Test
+	@DisplayName("Scenario Outline: 輸入無效或不存在的 ISBN 碼 | INVALID_ISBN → ISBN 碼格式錯誤或無效")
+	void invalidIsbnLetters() throws Exception {
+		mockMvc.perform(get("/api/books/{isbn}", "INVALID_ISBN"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.message").value("ISBN 碼格式錯誤或無效"))
+				.andExpect(jsonPath("$.title").doesNotExist());
+
+		// 格式錯誤就不該去問 Google
+		verify(googleBooksClient, never()).findByIsbn(anyString());
+	}
+
+	@Test
+	@DisplayName("Scenario Outline: 輸入無效或不存在的 ISBN 碼 | 978986134372（12 碼）→ ISBN 碼格式錯誤或無效")
+	void invalidIsbnTwelveDigits() throws Exception {
+		mockMvc.perform(get("/api/books/{isbn}", "978986134372"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.message").value("ISBN 碼格式錯誤或無效"));
+	}
+
+	@Test
+	@DisplayName("Scenario Outline: 輸入無效或不存在的 ISBN 碼 | 空白 → 請輸入 ISBN 碼（後端第二道防線，正常由前端擋下）")
+	void blankIsbn() throws Exception {
+		mockMvc.perform(get("/api/books/{isbn}", "   "))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.message").value("請輸入 ISBN 碼"));
+	}
+
+	@Test
+	@DisplayName("規則：ISBN 前後空白會先去除")
+	void isbnIsTrimmed() throws Exception {
+		mockMvc.perform(get("/api/books/{isbn}", "  9789861343722  "))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.isbn").value("9789861343722"));
+	}
+}
+```
+
+**白話解釋**
+- 多了一個 `@MockitoBean private OpenLibraryClient openLibraryClient;`。**這行很重要**：沒有它的話，測試會真的連到 Open Library，網路一斷測試就失敗，而且每跑一次測試都在打擾對方的伺服器。
+- Mockito 的替身遇到沒寫劇本的情況時，回傳型態是 `Optional` 的方法會自動回 `Optional.empty()`，也就是「查無」。但測試裡還是明確寫出 `thenReturn(Optional.empty())`，讀測試的人一看就懂。
+- `verify(openLibraryClient, never()).findByIsbn(anyString())`：證明「Google 查到時，不會再問 Open Library」。
+- BDD 的 Scenario Outline 有 3 組範例，所以對應 3 個測試方法（`bothSourcesUnavailable`、`googleNotFoundOpenLibraryUnavailable`、`googleUnavailableOpenLibraryNotFound`），每一組一個。
+
+### 13-6 測試：OpenLibraryClientTest.java
+
+**`backend/src/test/java/com/wabisabi/library/client/OpenLibraryClientTest.java`**
+
+```java
+package com.wabisabi.library.client;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.Optional;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import com.wabisabi.library.entity.Book;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * 單元測試：檢查「Open Library 回傳的 JSON → Book」的轉換規則。
+ * 不啟動 Spring、不連網，直接餵假的 JSON 字串給 toBook。
+ */
+class OpenLibraryClientTest {
+
+	private static final String ISBN = "9780132350884";
+
+	private final JsonMapper jsonMapper = JsonMapper.builder().build();
+
+	private Optional<Book> parse(String json) {
+		JsonNode root = jsonMapper.readTree(json);
+		return OpenLibraryClient.toBook(ISBN, root);
+	}
+
+	@Test
+	@DisplayName("書名只取 title（不含 subtitle），多位作者用「、」連接，出版日期照原樣")
+	void mapsFields() {
+		Optional<Book> book = parse("""
+				{"ISBN:9780132350884": {
+				  "title": "Clean Code",
+				  "subtitle": "A Handbook of Agile Software Craftsmanship",
+				  "authors": [{"name": "Robert C. Martin"}, {"name": "某位共同作者"}],
+				  "publish_date": "July 2008"
+				}}
+				""");
+
+		assertThat(book).isPresent();
+		assertThat(book.get().getIsbn()).isEqualTo(ISBN);
+		assertThat(book.get().getTitle()).isEqualTo("Clean Code");
+		assertThat(book.get().getAuthor()).isEqualTo("Robert C. Martin、某位共同作者");
+		assertThat(book.get().getPublishDate()).isEqualTo("July 2008");
+	}
+
+	@Test
+	@DisplayName("Open Library 查無資料（回傳空的 {}）→ 查不到")
+	void emptyObject() {
+		assertThat(parse("{}")).isEmpty();
+	}
+
+	@Test
+	@DisplayName("回傳的是別的 ISBN（欄位名稱對不上）→ 查不到")
+	void differentIsbnKey() {
+		assertThat(parse("""
+				{"ISBN:9999999999999": {"title": "別本書"}}
+				""")).isEmpty();
+	}
+
+	@Test
+	@DisplayName("沒有書名 → 當作查不到")
+	void missingTitle() {
+		assertThat(parse("""
+				{"ISBN:9780132350884": {"authors": [{"name": "某人"}]}}
+				""")).isEmpty();
+	}
+
+	@Test
+	@DisplayName("沒有作者或出版日期時存空字串")
+	void missingAuthorAndDate() {
+		Optional<Book> book = parse("""
+				{"ISBN:9780132350884": {"title": "只有書名"}}
+				""");
+		assertThat(book.get().getAuthor()).isEmpty();
+		assertThat(book.get().getPublishDate()).isEmpty();
+	}
+
+	@Test
+	@DisplayName("出版日期超過 20 字元時截斷，避免存檔失敗")
+	void longPublishDateIsTruncated() {
+		Optional<Book> book = parse("""
+				{"ISBN:9780132350884": {"title": "書", "publish_date": "Wednesday, September 30, 2015"}}
+				""");
+		assertThat(book.get().getPublishDate()).hasSize(20);
+	}
+}
+```
+
+- 跟 `GoogleBooksClientTest` 一樣是不啟動 Spring 的單元測試，直接餵假 JSON 給 `toBook`。
+- `differentIsbnKey`：回應裡的欄位名稱和我們查的 ISBN 對不上時，不可以把別本書當成結果。
+
+### 13-7 測試：OpenLibraryClientHttpTest.java
+
+**`backend/src/test/java/com/wabisabi/library/client/OpenLibraryClientHttpTest.java`**
+
+```java
+package com.wabisabi.library.client;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
+import java.util.Optional;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
+
+import com.wabisabi.library.entity.Book;
+
+/**
+ * 單元測試：OpenLibraryClient 實際送出的請求（網址、User-Agent）與錯誤處理。
+ * MockRestServiceServer 是「假的 Open Library」：不連網，由測試決定它要回什麼。
+ */
+class OpenLibraryClientHttpTest {
+
+	private static final String ISBN = "9780132350884";
+	private static final String URL = "https://openlibrary.org/api/books?bibkeys=ISBN:" + ISBN + "&format=json&jscmd=data";
+
+	/** 建立一個「接到假 Open Library」的 OpenLibraryClient */
+	private record Setup(OpenLibraryClient client, MockRestServiceServer server) {
+	}
+
+	private Setup setup() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		return new Setup(new OpenLibraryClient(builder), server);
+	}
+
+	@Test
+	@DisplayName("送出正確的網址，並在 User-Agent 帶上程式名稱")
+	void sendsExpectedRequest() {
+		Setup s = setup();
+		s.server().expect(requestTo(URL))
+				.andExpect(method(HttpMethod.GET))
+				.andExpect(header(HttpHeaders.USER_AGENT, OpenLibraryClient.USER_AGENT))
+				.andRespond(withSuccess("""
+						{"ISBN:9780132350884": {"title": "Clean Code", "authors": [{"name": "Robert C. Martin"}], "publish_date": "July 2008"}}
+						""", MediaType.APPLICATION_JSON));
+
+		Optional<Book> book = s.client().findByIsbn(ISBN);
+
+		assertThat(book).isPresent();
+		assertThat(book.get().getTitle()).isEqualTo("Clean Code");
+		s.server().verify(); // 確認真的送出了上面預期的請求
+	}
+
+	@Test
+	@DisplayName("Open Library 查無資料（{}）→ 回傳空的 Optional")
+	void notFound() {
+		Setup s = setup();
+		s.server().expect(requestTo(URL))
+				.andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+		assertThat(s.client().findByIsbn(ISBN)).isEmpty();
+	}
+
+	@Test
+	@DisplayName("Open Library 回 500（伺服器錯誤）→ 丟出 BookSourceUnavailableException")
+	void serverError() {
+		Setup s = setup();
+		s.server().expect(requestTo(URL))
+				.andRespond(withServerError());
+
+		assertThatThrownBy(() -> s.client().findByIsbn(ISBN))
+				.isInstanceOf(BookSourceUnavailableException.class)
+				.hasMessageContaining("Open Library");
+	}
+}
+```
+
+- `header(HttpHeaders.USER_AGENT, OpenLibraryClient.USER_AGENT)`：檢查請求**真的**帶了 User-Agent。
+- `withServerError()`：假的 Open Library 回 500，確認我們會丟出 `BookSourceUnavailableException`，而且訊息裡有「Open Library」。
+
+### 對應的 Scenario（BDD v1.2.0）
+
+| BDD Scenario | 後端測試 | 實測 |
+|---|---|---|
+| 本機沒有但 Google Books 有收錄（不再查 Open Library） | ✅ `findBookFromGoogleAndSave` | 🔸 Google `isbn:` 目前查不到資料，待 Google 恢復 |
+| 本機與 Google 都沒有、但 Open Library 有收錄 | ✅ `findBookFromOpenLibraryAndSave` | ✅ Clean Code、Harry Potter |
+| Google 無法連線但 Open Library 有收錄 | ✅ `googleUnavailableButOpenLibraryHasBook` | — |
+| 外部來源無法確認（3 組範例） | ✅ 3 個測試 | — |
+| 找不到此書籍（`9789999999999`） | ✅ `bookNotFound` | ✅ |
+
+### 怎麼驗證成功
+
+**驗證 1：跑測試**
+```bash
+cd backend
+./mvnw test
+```
+實測結果（2026-10-20）：共 **67** 個測試全部通過（新增 13 個：`BookApiTest` 4 個、`OpenLibraryClientTest` 6 個、`OpenLibraryClientHttpTest` 3 個）。
+
+**驗證 2：用 curl 實測（連 MySQL，2026-10-20）**
+
+| # | 請求 | 結果 |
+|---|---|---|
+| 1 | `/api/books/9789861343722`（種子書） | 200，0.2 秒，直接從本機讀 |
+| 2 | `/api/books/9780132350884`（第 1 次） | 200 `{"author":"Robert C. Martin","publishDate":"July 2008","title":"Clean Code",...}`，2.4 秒（Google 查無 → Open Library 查到 → 存回本機） |
+| 3 | 同上（第 2 次） | 200，**0.006 秒**（已經在本機） |
+| 4 | `/api/books/9789999999999` | 404 `{"message":"找不到此書籍"}`，兩個來源都沒有錯誤紀錄 |
+
+**驗證 3：瀏覽器（2026-10-20）**
+- 1280px：查 `9780439708180`，結果卡片顯示「Harry Potter and the sorcerer's stone」「J. K. Rowling」「1999」，版面與其他書相同。
+- 375px：長英文書名自動換行、沒有水平捲軸；查 `9789999999999` 顯示紅框「⚠ 錯誤提示：找不到此書籍」。
+
+> 實測後，Clean Code 與 Harry Potter 已存進 MySQL 的 `books` 表。想重測「第一次從 Open Library 查到」的流程，可以刪掉它們（如果已經收藏，要先刪收藏）：
+> ```sql
+> DELETE FROM books WHERE isbn IN ('9780132350884', '9780439708180');
+> ```
+
+**常見問題**
+| 症狀 | 原因與處理 |
+|---|---|
+| 查到的書名或作者怪怪的 | Open Library 是社群維護的資料庫，偶爾有錯（例如上表的 9789863980315）。資料已存回本機，可以用 MySQL Workbench 直接修正 `books` 表 |
+| 中文書常常「找不到此書籍」 | 兩個來源的中文書收錄都不多，屬於資料來源的限制 |
+| 「查詢失敗，請稍後再試」 | 至少有一個來源連不上；看後端主控台的 `Google Books 查詢失敗` 或 `Open Library 查詢失敗` 那一行，就知道是哪一個 |
 
 ---
 
