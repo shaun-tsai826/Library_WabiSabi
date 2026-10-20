@@ -46,7 +46,7 @@ public class GoogleBooksClient {
 	 * 用 ISBN 查書。
 	 *
 	 * @return 查到 → 裝著 Book 的 Optional；Google 沒有這本書 → 空的 Optional
-	 * @throws GoogleBooksUnavailableException Google 無法使用時
+	 * @throws BookSourceUnavailableException Google 無法使用時
 	 */
 	public Optional<Book> findByIsbn(String isbn) {
 		JsonNode root;
@@ -59,7 +59,7 @@ public class GoogleBooksClient {
 			// 把原因印在後端主控台（例如 429 Too Many Requests、timed out），方便除錯。
 			// 錯誤訊息裡可能含有完整網址，所以先把金鑰遮掉，避免金鑰出現在紀錄檔裡
 			log.warn("Google Books 查詢失敗（ISBN {}）：{}", isbn, maskKey(e.getMessage(), apiKey));
-			throw new GoogleBooksUnavailableException(e);
+			throw new BookSourceUnavailableException("Google Books", e);
 		}
 		return toBook(isbn, root);
 	}
