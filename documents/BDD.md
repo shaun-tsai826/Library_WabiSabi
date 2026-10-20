@@ -1,5 +1,12 @@
 # ---------------------------------------------------------------------------
-# 版本：v1.1.0（2026-10-15）
+# 版本：v1.2.0（2026-10-20）
+# v1.2.0 修訂：
+# - 書籍來源新增 Open Library 作為備援：本機 → Google Books → Open Library，查到後存回本機
+# - Google Books 無法連線時，仍改查 Open Library
+# - 只有所有外部來源都明確查無時，才顯示「找不到此書籍」；
+#   任一來源無法使用且都沒查到時，顯示「查詢失敗，請稍後再試」
+# - Open Library 的出版日期（例如「July 2008」）與 Google Books 相同，照原樣存放與顯示
+# - 「找不到此書籍」範例 ISBN 改為 9789999999999（Open Library 實際收錄了 9780000000000）
 # v1.1.0 修訂：
 # - 新增 Scenario「未登入使用者嘗試訪問個人頁面被拒絕」，提示文字為「請先註冊/登入」
 # v1.0.0 修訂說明（與原版的差異）
@@ -30,6 +37,10 @@ Feature: 書本查詢、會員驗證與個人收藏管理 (Book Search, Auth, an
   # -----------------------------------------------------------------------------
   # 需求 1: 首頁查詢書籍基本資訊與錯誤提示
   # ISBN 格式規則：前後空白先去除，須為 13 碼數字；不驗證檢查碼
+  # 書籍來源順序：本機 books 表 → Google Books → Open Library（v1.2.0）
+  #   - 任一來源查到：顯示並存回本機，之後的來源不再查詢
+  #   - 所有外部來源都明確查無：「找不到此書籍」
+  #   - 任一外部來源無法使用、且都沒查到：「查詢失敗，請稍後再試」
   # -----------------------------------------------------------------------------
   Scenario: 成功查詢到存在的書籍資訊
     Given 使用者位於「首頁」
@@ -41,7 +52,7 @@ Feature: 書本查詢、會員驗證與個人收藏管理 (Book Search, Auth, an
       | 出版日期 | 2020-05-01                   |
     And 頁面應顯示「加入收藏」按鈕
 
-  # 測試時 Google Books API 以模擬 (Mock) 回應取代，不實際連網
+  # 測試時 Google Books 與 Open Library API 皆以模擬 (Mock) 回應取代，不實際連網
   Scenario: 本機沒有但 Google Books 有收錄的書籍，可查詢並存回本機
     Given 本機 books 資料表中沒有 ISBN 為 "<某個 Google Books 有收錄的 13 碼 ISBN>" 的書籍
     And Google Books API 回傳該書籍的書名、作者與出版日期
@@ -51,17 +62,46 @@ Feature: 書本查詢、會員驗證與個人收藏管理 (Book Search, Auth, an
     Then 頁面應顯示該書籍詳細資訊
     And 該書籍資料應被存入本機 books 資料表
     And 若 Google Books 的出版日期只有年或年月，頁面應照原樣顯示
+    And 系統不需再查詢 Open Library
 
-  Scenario: 本機沒有且 Google Books 無法連線時顯示錯誤
-    Given 本機 books 資料表中沒有 ISBN 為 "9780000000001" 的書籍
+  Scenario: 本機與 Google Books 都沒有、但 Open Library 有收錄的書籍，可查詢並存回本機
+    Given 本機 books 資料表中沒有 ISBN 為 "<某個 Open Library 有收錄的 13 碼 ISBN>" 的書籍
+    And Google Books API 查無該書籍 (模擬)
+    And Open Library API 回傳該書籍的書名、作者與出版日期 (模擬)
+    And 使用者位於「首頁」
+    When 使用者在 ISBN 輸入框輸入該 ISBN
+    And 點擊「查詢」按鈕
+    Then 頁面應顯示該書籍詳細資訊
+    And 該書籍資料應被存入本機 books 資料表
+    And 出版日期應照 Open Library 回傳的原樣顯示
+
+  Scenario: Google Books 無法連線但 Open Library 有收錄，仍可查詢
+    Given 本機 books 資料表中沒有 ISBN 為 "<某個 Open Library 有收錄的 13 碼 ISBN>" 的書籍
     And Google Books API 無法連線 (模擬)
+    And Open Library API 回傳該書籍的書名、作者與出版日期 (模擬)
+    And 使用者位於「首頁」
+    When 使用者在 ISBN 輸入框輸入該 ISBN
+    And 點擊「查詢」按鈕
+    Then 頁面應顯示該書籍詳細資訊
+    And 該書籍資料應被存入本機 books 資料表
+
+  Scenario Outline: 本機沒有且外部來源無法確認時顯示錯誤
+    Given 本機 books 資料表中沒有 ISBN 為 "9780000000001" 的書籍
+    And Google Books API <google>
+    And Open Library API <open_library>
     And 使用者位於「首頁」
     When 使用者在 ISBN 輸入框輸入 "9780000000001"
     And 點擊「查詢」按鈕
     Then 頁面應跳出錯誤提示訊息 "查詢失敗，請稍後再試"
     And 頁面不應顯示任何書籍詳細資訊
 
-  # 9780000000000：本機與 Google Books (模擬) 皆查無資料
+    Examples:
+      | google          | open_library    |
+      | 無法連線 (模擬) | 無法連線 (模擬) |
+      | 查無 (模擬)     | 無法連線 (模擬) |
+      | 無法連線 (模擬) | 查無 (模擬)     |
+
+  # 9789999999999：本機、Google Books、Open Library (模擬) 皆查無資料
   Scenario Outline: 輸入無效或不存在的 ISBN 碼顯示錯誤訊息
     Given 使用者位於「首頁」
     When 使用者在 ISBN 輸入框輸入 "<input_isbn>"
@@ -71,7 +111,7 @@ Feature: 書本查詢、會員驗證與個人收藏管理 (Book Search, Auth, an
 
     Examples:
       | input_isbn    | error_message            |
-      | 9780000000000 | 找不到此書籍             |
+      | 9789999999999 | 找不到此書籍             |
       | INVALID_ISBN  | ISBN 碼格式錯誤或無效    |
       | 978986134372  | ISBN 碼格式錯誤或無效    |
       |               | 請輸入 ISBN 碼           |
