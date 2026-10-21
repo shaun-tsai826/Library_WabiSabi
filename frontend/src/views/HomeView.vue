@@ -9,6 +9,7 @@ import PageTitle from '@/components/PageTitle.vue'
 import BaseInput from '@/components/BaseInput.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import BaseCard from '@/components/BaseCard.vue'
+import BookCover from '@/components/BookCover.vue'
 import ErrorBox from '@/components/ErrorBox.vue'
 import EmptyBox from '@/components/EmptyBox.vue'
 import { api } from '@/api'
@@ -112,14 +113,20 @@ function orDash(value) {
 
     <!-- 狀態 (b)：查詢成功 -->
     <BaseCard v-else-if="book">
-      <p class="result__caption"><strong>查詢結果</strong> (Search Result)</p>
-      <h2 class="result__title">書名：{{ book.title }}</h2>
-      <p class="result__line">作者：{{ orDash(book.author) }}</p>
-      <p class="result__line">出版日期：{{ orDash(book.publishDate) }}</p>
-      <p class="result__isbn">ISBN：{{ book.isbn }}</p>
-      <BaseButton variant="secondary" class="result__add" :disabled="adding" @click="addFavorite">
-        + 加入收藏
-      </BaseButton>
+      <!-- 左封面、右資訊（手機版改成上下排列，見下方 CSS） -->
+      <div class="result">
+        <BookCover :isbn="book.isbn" :title="book.title" size="lg" class="result__cover" />
+        <div class="result__info">
+          <p class="result__caption"><strong>查詢結果</strong> (Search Result)</p>
+          <h2 class="result__title">書名：{{ book.title }}</h2>
+          <p class="result__line">作者：{{ orDash(book.author) }}</p>
+          <p class="result__line">出版日期：{{ orDash(book.publishDate) }}</p>
+          <p class="result__isbn">ISBN：{{ book.isbn }}</p>
+          <BaseButton variant="secondary" class="result__add" :disabled="adding" @click="addFavorite">
+            + 加入收藏
+          </BaseButton>
+        </div>
+      </div>
     </BaseCard>
 
     <!-- 狀態 (a)：初始（查詢中不顯示） -->
@@ -146,7 +153,18 @@ function orDash(value) {
   flex: 3;
 }
 
-/* ===== 結果卡片 ===== */
+/* ===== 結果卡片：左封面（120×180）、右資訊（DESIGN.md 5.1-b、4.10） ===== */
+.result {
+  display: flex;
+  align-items: flex-start;
+  gap: 32px;
+}
+
+.result__info {
+  flex: 1;
+  min-width: 0; /* 讓長書名可以換行 */
+}
+
 .result__caption {
   margin: 0 0 24px;
   color: var(--color-text-muted);
@@ -168,9 +186,10 @@ function orDash(value) {
   font-size: 0.9em;
 }
 
-/* 「+ 加入收藏」：靠左、約卡片寬 35%；與 ISBN 行至少隔 16px（DESIGN.md 5.1-b） */
+/* 「+ 加入收藏」：靠左、約卡片寬 35%；與 ISBN 行至少隔 16px（DESIGN.md 5.1-b）
+   按鈕現在放在封面右側的資訊欄裡，資訊欄比整張卡片窄，所以用 40% 換算回來約等於卡片寬的 35% */
 .result__add {
-  width: 35%;
+  width: 40%;
   margin-top: 24px;
 }
 
@@ -180,8 +199,9 @@ function orDash(value) {
     gap: 24px;
   }
 
+  /* 平板：約卡片寬 50%（資訊欄較窄，換算成 65%） */
   .result__add {
-    width: 50%;
+    width: 65%;
   }
 }
 
@@ -192,6 +212,17 @@ function orDash(value) {
     align-items: stretch;
     gap: 16px;
     margin-bottom: 32px;
+  }
+
+  /* 封面置中放在上方，資訊在下方 */
+  .result {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 24px;
+  }
+
+  .result__cover {
+    align-self: center;
   }
 
   .result__add {

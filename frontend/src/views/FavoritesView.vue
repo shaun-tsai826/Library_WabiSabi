@@ -8,6 +8,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import PageTitle from '@/components/PageTitle.vue'
 import BaseCard from '@/components/BaseCard.vue'
+import BookCover from '@/components/BookCover.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import ErrorBox from '@/components/ErrorBox.vue'
 import EmptyBox from '@/components/EmptyBox.vue'
@@ -100,9 +101,13 @@ function handleSessionExpired() {
         <!-- v-for：清單有幾筆就畫幾張卡片；:key 讓 Vue 分辨每一筆 -->
         <li v-for="item in favorites" :key="item.id">
           <BaseCard class="item">
-            <div class="item__info">
-              <h3 class="item__title">{{ item.title }}</h3>
-              <p class="item__meta">作者：{{ item.author || '—' }} | ISBN: {{ item.isbn }}</p>
+            <!-- 左邊：封面縮圖＋書名與資訊（手機版這兩個仍在同一列） -->
+            <div class="item__main">
+              <BookCover :isbn="item.isbn" :title="item.title" size="sm" lazy />
+              <div class="item__info">
+                <h3 class="item__title">{{ item.title }}</h3>
+                <p class="item__meta">作者：{{ item.author || '—' }} | ISBN: {{ item.isbn }}</p>
+              </div>
             </div>
             <BaseButton
               variant="danger"
@@ -146,6 +151,14 @@ function handleSessionExpired() {
   gap: 32px;
   padding-top: 40px;
   padding-bottom: 40px;
+}
+
+/* 封面縮圖（64×96）與書名資訊排成一列 */
+.item__main {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-width: 0;
 }
 
 .item__info {
@@ -218,6 +231,10 @@ function handleSessionExpired() {
     gap: 20px;
     padding-top: 24px;
     padding-bottom: 24px;
+  }
+
+  .item__main {
+    gap: 16px;
   }
 
   .item__delete {
