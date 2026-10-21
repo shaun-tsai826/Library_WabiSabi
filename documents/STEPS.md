@@ -1,6 +1,6 @@
 # STEPS.md：LIBRARY / 侘寂書閣 開發步驟紀錄
 
-> 對應文件：BDD.md v1.2.0（步驟 13 起；步驟 0～12 對應 v1.1.0）、DESIGN.md v1.1.0、PROMPT.md v1.3.0
+> 對應文件：BDD.md v1.3.0、DESIGN.md v1.2.0（步驟 14 起；步驟 13 對應 BDD v1.2.0；步驟 0～12 對應 BDD v1.1.0、DESIGN v1.1.0）、PROMPT.md v1.3.0
 > 這份文件記錄每一步「做了什麼、為什麼這樣做、怎麼確認成功」。照著從頭做一遍，就能自己重建整個專案。
 
 ---
@@ -23,6 +23,7 @@
 - [步驟 11：總驗收與手動測試清單](#步驟-11總驗收與手動測試清單)
 - [步驟 12：Google Books API 金鑰](#步驟-12google-books-api-金鑰)
 - [步驟 13：Open Library 備援資料來源（BDD v1.2.0）](#步驟-13open-library-備援資料來源bdd-v120)
+- [步驟 14：書籍封面（BDD v1.3.0、DESIGN v1.2.0）](#步驟-14書籍封面bdd-v130design-v120)
 - [如何快速上手](#如何快速上手)
 
 ---
@@ -7737,6 +7738,726 @@ cd backend
 | 查到的書名或作者怪怪的 | Open Library 是社群維護的資料庫，偶爾有錯（例如上表的 9789863980315）。資料已存回本機，可以用 MySQL Workbench 直接修正 `books` 表 |
 | 中文書常常「找不到此書籍」 | 兩個來源的中文書收錄都不多，屬於資料來源的限制 |
 | 「查詢失敗，請稍後再試」 | 至少有一個來源連不上；看後端主控台的 `Google Books 查詢失敗` 或 `Open Library 查詢失敗` 那一行，就知道是哪一個 |
+
+---
+
+## 步驟 14：書籍封面（BDD v1.3.0、DESIGN v1.2.0）
+
+### 目標
+查詢結果與收藏清單顯示書籍封面；沒有封面時顯示同尺寸的空白框，不顯示錯誤。
+這是「收藏頁新功能」規劃的**第 1 階段**（之後依序是：種類＋搜尋、Dashboard）。
+
+| 順序 | 做什麼 | commit |
+|---|---|---|
+| 1 | 從 `main` 開分支 `feature/book-covers` | — |
+| 2 | BDD.md → v1.3.0（新增 3 個 Scenario）、DESIGN.md → v1.2.0（新增 4.10 封面規格） | `b261c90` |
+| 3 | 新增 `BookCover.vue`，放進首頁與收藏頁 | `7c7b034` |
+| 4 | 瀏覽器實測（375／768／1280） | — |
+| 5 | 文件（本節與 MANUAL_TEST.md） | 本次 |
+
+**這一步完全不用改後端與資料庫**：前端直接用 ISBN 組出封面網址，讓瀏覽器自己去載圖。
+
+### 名詞先解釋
+- **封面服務**：Open Library 另外提供的圖片網址，用 ISBN 就能拿到封面，不用先查書：
+  ```
+  https://covers.openlibrary.org/b/isbn/9780132350884-M.jpg?default=false
+  ```
+  - `-M`：中尺寸（寬 180px）。另有 `-S`（寬約 40px，太小，放大會糊）和 `-L`（大圖）。
+  - `?default=false`：沒有封面時回 **404**，而不是回一張空白圖。這樣瀏覽器才會觸發錯誤事件，我們才知道要改顯示空白框。
+- **`@load` / `@error`**：`<img>` 的兩個事件。圖片載入成功觸發 `load`，失敗（例如 404）觸發 `error`。
+- **`aspect-ratio: 2 / 3`**：CSS 的「長寬比」。只要設定寬度，高度就會自動算成寬度的 1.5 倍，例如寬 120px → 高 180px。
+- **`object-fit: cover`**：圖片比例和外框不同時，等比例放大到「填滿外框」，多出來的部分裁掉。（另一個選項 `contain` 是「完整顯示」，可能留白。）
+- **`loading="lazy"`**：延遲載入。圖片要捲動到畫面附近才開始下載，收藏很多書時，頁面一打開不會同時下載幾十張圖。
+
+### 實測觀察（2026-10-21）
+| ISBN | 封面 | 載入時間 |
+|---|---|---|
+| 9780132350884 Clean Code | ✅ 180×238 | 約 0.8 秒 |
+| 9780439708180 Harry Potter | ✅ 180×261 | 約 2.5 秒 |
+| 9780393356250 The Odyssey | ✅ 180×261 | 約 2 秒 |
+| 9789861343722、9789863980315（種子書） | ❌ 404 → 空白框 | — |
+| 9786263106659（台灣新書） | ❌ 404 → 空白框 | — |
+
+西文書大多有封面；中文書常常沒有，會顯示空白框（DESIGN.md 第 7 節已確認這樣沒關係）。
+
+### 建立或修改的檔案
+```
+documents/BDD.md                               修改：v1.3.0
+documents/DESIGN.md                            修改：v1.2.0（3.1、4.10、5.1-b、5.3-a、第 6、7 節）
+frontend/src/components/BookCover.vue          新增：書籍封面元件
+frontend/src/views/HomeView.vue                修改：結果卡片「左封面、右資訊」
+frontend/src/views/FavoritesView.vue           修改：收藏卡片加入封面縮圖
+```
+
+### 14-1 封面元件：BookCover.vue
+
+**`frontend/src/components/BookCover.vue`**
+
+```vue
+<!--
+  書籍封面（DESIGN.md 4.10）：用 ISBN 向 Open Library 封面服務取得圖片。
+  載入中、沒有封面、載入失敗：都只顯示空白外框（不放圖示、不放文字、不顯示錯誤）。
+  用法：<BookCover :isbn="book.isbn" :title="book.title" size="lg" />
+    size：lg（首頁結果卡片 120×180，手機 100×150）／sm（收藏卡片 64×96，手機 56×84）
+    lazy：捲動到附近才載入（收藏頁使用）
+-->
+<script setup>
+import { computed, ref, watch } from 'vue'
+
+const props = defineProps({
+  isbn: { type: String, required: true },
+  title: { type: String, default: '' },
+  size: { type: String, default: 'lg' },
+  lazy: { type: Boolean, default: false },
+})
+
+// default=false：沒有封面時 Open Library 回 404，瀏覽器就會觸發 @error
+const src = computed(() => `https://covers.openlibrary.org/b/isbn/${props.isbn}-M.jpg?default=false`)
+
+const loaded = ref(false) // 圖片已經載入完成
+const failed = ref(false) // 沒有封面或載入失敗
+
+// 換了一本書（例如在首頁重新查詢）時，狀態要重新開始
+watch(
+  () => props.isbn,
+  () => {
+    loaded.value = false
+    failed.value = false
+  },
+)
+</script>
+
+<template>
+  <!-- 外框本身就是空白封面框；圖片載入成功才會蓋在上面 -->
+  <div :class="['cover', `cover--${size}`]" :aria-hidden="failed ? 'true' : undefined">
+    <img
+      v-if="!failed"
+      :src="src"
+      :alt="`《${title}》封面`"
+      :loading="lazy ? 'lazy' : 'eager'"
+      :class="['cover__img', { 'is-loaded': loaded }]"
+      @load="loaded = true"
+      @error="failed = true"
+    />
+  </div>
+</template>
+
+<style scoped>
+/* 2:3 的直式外框；沒有圖片時看到的就是這個空白框 */
+.cover {
+  flex-shrink: 0; /* 放在 flex 排版裡時，不會被擠扁 */
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  background: var(--color-bg);
+  border: var(--line) solid var(--color-border);
+  border-radius: 4px;
+}
+
+.cover--lg {
+  width: 120px;
+}
+
+.cover--sm {
+  width: 64px;
+}
+
+/* 圖片填滿外框（比例略有不同時，上下會被裁掉一點點） */
+.cover__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  visibility: hidden; /* 還沒載入完成前先藏起來，避免看到破圖的小圖示 */
+}
+
+.cover__img.is-loaded {
+  visibility: visible;
+}
+
+/* 手機：尺寸縮小（DESIGN.md 3.1） */
+@media (max-width: 767px) {
+  .cover--lg {
+    width: 100px;
+  }
+
+  .cover--sm {
+    width: 56px;
+  }
+}
+</style>
+```
+
+**白話解釋**
+- **外框就是空白框**：`<div class="cover">` 本身有米白底和細邊框。圖片載入成功才會蓋在上面；沒有圖片時看到的就是外框本身。所以「載入中」、「沒有封面」、「載入失敗」三種情況不用分別處理，畫面自然就是空白框。
+- **為什麼要 `visibility: hidden` 直到 `@load`？** 圖片還沒下載完、或下載失敗的那一瞬間，瀏覽器會顯示一個「破圖」小圖示。先藏起來，等確定載入成功才顯示，畫面就不會閃一下怪東西。
+- **`@error="failed = true"` → `v-if="!failed"`**：失敗時直接把 `<img>` 從畫面上拿掉，只留外框。
+- **`watch(() => props.isbn, ...)`**：首頁可以連續查好幾本書，元件會一直被重複使用。換了 ISBN 就把 `loaded`、`failed` 重設，否則查完一本沒封面的書，下一本有封面的書也會一直顯示空白。
+- **`computed`**：「由別的資料算出來的值」。`src` 由 `isbn` 組成，`isbn` 一變，`src` 就自動跟著變。
+- `:aria-hidden="failed ? 'true' : undefined"`：沒有圖片時，空白框對螢幕報讀軟體沒有意義，就讓它跳過。
+- `flex-shrink: 0`：放在 flex 排版裡時，即使空間不夠也不會被擠扁。
+
+### 14-2 首頁：HomeView.vue（修改後全文）
+
+**`frontend/src/views/HomeView.vue`**
+
+```vue
+<!--
+  首頁 /：用 ISBN 查詢書籍（DESIGN.md 5.1）。
+  三種狀態：初始（虛線空狀態框）、查詢成功（結果卡片）、查詢錯誤（紅色錯誤框）。
+-->
+<script setup>
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import PageTitle from '@/components/PageTitle.vue'
+import BaseInput from '@/components/BaseInput.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import BaseCard from '@/components/BaseCard.vue'
+import BookCover from '@/components/BookCover.vue'
+import ErrorBox from '@/components/ErrorBox.vue'
+import EmptyBox from '@/components/EmptyBox.vue'
+import { api } from '@/api'
+import { auth, setLoggedOut } from '@/auth'
+import { showToast } from '@/toast'
+import { MESSAGES } from '@/messages'
+import { validateIsbn } from '@/validators'
+
+const router = useRouter()
+
+// ===== 畫面狀態（ref：值一改，畫面就自動更新） =====
+const isbnInput = ref('') // 輸入框的內容（保留使用者輸入的原樣）
+const book = ref(null) // 查到的書；null = 沒有結果
+const errorMessage = ref('') // 錯誤訊息；'' = 沒有錯誤
+const searching = ref(false) // 是否正在查詢（按鈕顯示「查詢中...」）
+const adding = ref(false) // 是否正在加入收藏（避免連按）
+
+/** 按下「查詢」 */
+async function search() {
+  const isbn = isbnInput.value.trim()
+
+  // 每次查詢前先清掉上一次的結果與錯誤
+  book.value = null
+  errorMessage.value = ''
+
+  // 前端先驗證：空白、格式錯誤都不呼叫 API（設計決策 10）
+  const invalid = validateIsbn(isbn)
+  if (invalid) {
+    errorMessage.value = invalid
+    return
+  }
+
+  searching.value = true
+  const result = await api.get(`/api/books/${encodeURIComponent(isbn)}`)
+  searching.value = false
+
+  if (result.ok) {
+    book.value = result.data
+  } else {
+    // 404 找不到此書籍、503 查詢失敗，請稍後再試…都直接顯示後端的訊息
+    errorMessage.value = result.data.message
+  }
+}
+
+/** 按下「+ 加入收藏」 */
+async function addFavorite() {
+  // 未登入：提示並導向登入/註冊頁
+  if (!auth.user) {
+    goLogin()
+    return
+  }
+
+  adding.value = true
+  const result = await api.post('/api/favorites/add', { isbn: book.value.isbn })
+  adding.value = false
+
+  if (result.ok) {
+    showToast(result.data.message) // 已成功加入收藏
+  } else if (result.status === 409) {
+    showToast(result.data.message, 'warning') // 此書籍已在收藏清單中，請勿重複收藏
+  } else if (result.status === 401) {
+    // 畫面以為有登入，但 Session 已經失效：當作未登入處理
+    setLoggedOut()
+    goLogin()
+  } else {
+    showToast(result.data.message, 'error')
+  }
+}
+
+function goLogin() {
+  showToast(MESSAGES.FAVORITE_LOGIN_REQUIRED, 'warning')
+  router.push('/login')
+}
+
+/** 欄位沒有資料時顯示「—」 */
+function orDash(value) {
+  return value ? value : '—'
+}
+</script>
+
+<template>
+  <div class="page page--wide">
+    <PageTitle title="首頁 — 書籍查詢" />
+
+    <!-- form + @submit.prevent：按 Enter 也能查詢，而且不會重新整理網頁 -->
+    <form class="search" @submit.prevent="search">
+      <BaseInput
+        v-model="isbnInput"
+        class="search__input"
+        label="ISBN 查詢"
+        placeholder="請輸入 13 位數 ISBN 碼..."
+        inputmode="numeric"
+      />
+      <BaseButton type="submit" class="search__button" spaced :disabled="searching">
+        {{ searching ? '查詢中...' : '查詢' }}
+      </BaseButton>
+    </form>
+
+    <!-- 狀態 (c)：查詢錯誤 -->
+    <ErrorBox v-if="errorMessage">⚠ 錯誤提示：{{ errorMessage }}</ErrorBox>
+
+    <!-- 狀態 (b)：查詢成功 -->
+    <BaseCard v-else-if="book">
+      <!-- 左封面、右資訊（手機版改成上下排列，見下方 CSS） -->
+      <div class="result">
+        <BookCover :isbn="book.isbn" :title="book.title" size="lg" class="result__cover" />
+        <div class="result__info">
+          <p class="result__caption"><strong>查詢結果</strong> (Search Result)</p>
+          <h2 class="result__title">書名：{{ book.title }}</h2>
+          <p class="result__line">作者：{{ orDash(book.author) }}</p>
+          <p class="result__line">出版日期：{{ orDash(book.publishDate) }}</p>
+          <p class="result__isbn">ISBN：{{ book.isbn }}</p>
+          <BaseButton variant="secondary" class="result__add" :disabled="adding" @click="addFavorite">
+            + 加入收藏
+          </BaseButton>
+        </div>
+      </div>
+    </BaseCard>
+
+    <!-- 狀態 (a)：初始（查詢中不顯示） -->
+    <EmptyBox v-else-if="!searching">
+      請在上方輸入 ISBN 碼並點擊「查詢」以檢視書籍詳細資訊
+    </EmptyBox>
+  </div>
+</template>
+
+<style scoped>
+/* ===== 查詢列：輸入框約 70%＋按鈕約 30%，同一列 ===== */
+.search {
+  display: flex;
+  align-items: flex-end; /* 按鈕對齊輸入框底部（輸入框上方有標籤） */
+  gap: 32px;
+  margin-bottom: 48px;
+}
+
+.search__input {
+  flex: 7;
+}
+
+.search__button {
+  flex: 3;
+}
+
+/* ===== 結果卡片：左封面（120×180）、右資訊（DESIGN.md 5.1-b、4.10） ===== */
+.result {
+  display: flex;
+  align-items: flex-start;
+  gap: 32px;
+}
+
+.result__info {
+  flex: 1;
+  min-width: 0; /* 讓長書名可以換行 */
+}
+
+.result__caption {
+  margin: 0 0 24px;
+  color: var(--color-text-muted);
+}
+
+.result__title {
+  margin: 0 0 20px;
+  font-size: 1.3em;
+  font-weight: 700;
+}
+
+.result__line {
+  margin: 0 0 16px;
+}
+
+.result__isbn {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9em;
+}
+
+/* 「+ 加入收藏」：靠左、約卡片寬 35%；與 ISBN 行至少隔 16px（DESIGN.md 5.1-b）
+   按鈕現在放在封面右側的資訊欄裡，資訊欄比整張卡片窄，所以用 40% 換算回來約等於卡片寬的 35% */
+.result__add {
+  width: 40%;
+  margin-top: 24px;
+}
+
+/* 平板：按鈕約卡片寬 50% */
+@media (max-width: 1023px) {
+  .search {
+    gap: 24px;
+  }
+
+  /* 平板：約卡片寬 50%（資訊欄較窄，換算成 65%） */
+  .result__add {
+    width: 65%;
+  }
+}
+
+/* 手機：輸入框與按鈕上下排列、各自滿寬；加入收藏按鈕滿寬 */
+@media (max-width: 767px) {
+  .search {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  /* 封面置中放在上方，資訊在下方 */
+  .result {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 24px;
+  }
+
+  .result__cover {
+    align-self: center;
+  }
+
+  .result__add {
+    width: 100%;
+  }
+}
+</style>
+```
+
+**和步驟 7 比，改了哪些地方**
+- `import BookCover`。
+- 結果卡片裡多包一層 `<div class="result">`：左邊是 `<BookCover size="lg">`，右邊 `<div class="result__info">` 放原本的所有內容。
+- `.result { display: flex; gap: 32px; }`：左右排列；`.result__info { flex: 1; min-width: 0; }`：資訊欄吃掉剩下的寬度，長書名可以換行。
+- **「+ 加入收藏」寬度 35% → 40%（平板 50% → 65%）**：按鈕現在放在資訊欄裡，資訊欄比整張卡片窄（少了封面＋間距約 152px）。百分比是「相對於資訊欄」算的，所以要放大一點，換算回來才會約等於卡片寬的 35%、50%。實測 1280px 剛好 35%、768px 剛好 50%。
+- 手機版 `.result { flex-direction: column; }` 改成上下排列，`.result__cover { align-self: center; }` 讓封面置中。
+
+### 14-3 收藏頁：FavoritesView.vue（修改後全文）
+
+**`frontend/src/views/FavoritesView.vue`**
+
+```vue
+<!--
+  收藏頁 /favorites（DESIGN.md 5.3）：需要登入（路由守衛把關）。
+  (a) 已登入：收藏清單，每本書旁邊有「刪除」；沒有收藏時顯示空狀態框。
+  (b) 未登入提示畫面：只在「停留在本頁時 Session 失效（API 回 401）」時顯示（備用）。
+-->
+<script setup>
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import PageTitle from '@/components/PageTitle.vue'
+import BaseCard from '@/components/BaseCard.vue'
+import BookCover from '@/components/BookCover.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import ErrorBox from '@/components/ErrorBox.vue'
+import EmptyBox from '@/components/EmptyBox.vue'
+import { api } from '@/api'
+import { auth, setLoggedOut } from '@/auth'
+import { showToast } from '@/toast'
+import { MESSAGES } from '@/messages'
+
+const router = useRouter()
+
+const favorites = ref([]) // 收藏清單
+const loading = ref(true) // 第一次載入中
+const sessionExpired = ref(false) // Session 失效 → 顯示未登入提示畫面
+const errorMessage = ref('') // 其他錯誤（例如連不上後端）
+const deletingId = ref(null) // 正在刪除哪一筆（按鈕暫時停用）
+
+// onMounted：頁面顯示出來之後執行一次
+onMounted(loadFavorites)
+
+async function loadFavorites() {
+  loading.value = true
+  const result = await api.get('/api/favorites')
+  loading.value = false
+
+  if (result.ok) {
+    favorites.value = result.data
+  } else if (result.status === 401) {
+    handleSessionExpired()
+  } else {
+    errorMessage.value = result.data.message
+  }
+}
+
+/** 按下某本書的「刪除」 */
+async function removeFavorite(item) {
+  // 瀏覽器內建的確認視窗：按「取消」就什麼都不做（DESIGN.md 4.9）
+  if (!window.confirm(MESSAGES.DELETE_CONFIRM)) {
+    return
+  }
+
+  deletingId.value = item.id
+  const result = await api.delete(`/api/favorites/${item.id}`)
+  deletingId.value = null
+
+  if (result.ok) {
+    showToast(result.data.message) // 已移除收藏
+    // 從畫面上的清單拿掉這一筆（「共 N 本」會自動跟著更新）
+    favorites.value = favorites.value.filter((f) => f.id !== item.id)
+  } else if (result.status === 401) {
+    handleSessionExpired()
+  } else {
+    // 例如另一個分頁已經刪掉了（404 找不到此收藏）：提示後重新載入清單
+    showToast(result.data.message, 'error')
+    loadFavorites()
+  }
+}
+
+function handleSessionExpired() {
+  setLoggedOut() // 導覽列變回「登入 / 註冊」
+  favorites.value = [] // 不再顯示任何收藏內容
+  sessionExpired.value = true
+}
+</script>
+
+<template>
+  <div class="page page--wide">
+    <PageTitle title="我的收藏 — 書籍清單" />
+
+    <!-- (b) 未登入提示畫面（Session 失效時的備用） -->
+    <template v-if="sessionExpired">
+      <ErrorBox center class="guest">
+        <p class="guest__title">您目前為未登入狀態</p>
+        <p class="guest__text">請先登入或註冊會員後，即可檢視與管理您的個人藏書</p>
+      </ErrorBox>
+      <div class="guest__action">
+        <BaseButton class="guest__button" @click="router.push('/login')">前往登入 / 註冊</BaseButton>
+      </div>
+    </template>
+
+    <!-- 其他錯誤 -->
+    <ErrorBox v-else-if="errorMessage">⚠ 錯誤提示：{{ errorMessage }}</ErrorBox>
+
+    <!-- (a) 已登入：清單（載入中先不顯示，避免閃一下「目前還沒有收藏」） -->
+    <template v-else-if="!loading">
+      <h2 class="summary">會員「{{ auth.user?.nickname }}」的私人藏書 (共 {{ favorites.length }} 本)</h2>
+
+      <EmptyBox v-if="favorites.length === 0">目前還沒有收藏的書籍</EmptyBox>
+
+      <ul v-else class="list">
+        <!-- v-for：清單有幾筆就畫幾張卡片；:key 讓 Vue 分辨每一筆 -->
+        <li v-for="item in favorites" :key="item.id">
+          <BaseCard class="item">
+            <!-- 左邊：封面縮圖＋書名與資訊（手機版這兩個仍在同一列） -->
+            <div class="item__main">
+              <BookCover :isbn="item.isbn" :title="item.title" size="sm" lazy />
+              <div class="item__info">
+                <h3 class="item__title">{{ item.title }}</h3>
+                <p class="item__meta">作者：{{ item.author || '—' }} | ISBN: {{ item.isbn }}</p>
+              </div>
+            </div>
+            <BaseButton
+              variant="danger"
+              class="item__delete"
+              :disabled="deletingId === item.id"
+              @click="removeFavorite(item)"
+            >
+              刪除
+            </BaseButton>
+          </BaseCard>
+        </li>
+      </ul>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+/* 左對齊粗體副標：會員「Cooqle」的私人藏書 (共 2 本) */
+.summary {
+  margin: 0 0 24px;
+  padding-left: 16px;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+/* ===== 收藏清單 ===== */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px; /* 卡片間距約 24px */
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 左：書名與資訊；右：「刪除」垂直置中 */
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  padding-top: 40px;
+  padding-bottom: 40px;
+}
+
+/* 封面縮圖（64×96）與書名資訊排成一列 */
+.item__main {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-width: 0;
+}
+
+.item__info {
+  min-width: 0; /* 讓長書名可以換行，不會把按鈕擠出去 */
+}
+
+.item__title {
+  margin: 0 0 16px;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+.item__meta {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.item__delete {
+  flex-shrink: 0;
+  width: 220px;
+}
+
+/* ===== 未登入提示畫面 ===== */
+.guest {
+  margin-top: 48px;
+}
+
+.guest__title {
+  margin: 0 0 8px;
+  font-size: 1.15em;
+}
+
+.guest__text {
+  margin: 0;
+  font-weight: 400;
+}
+
+.guest__action {
+  display: flex;
+  justify-content: center;
+  margin-top: 56px;
+}
+
+.guest__button {
+  width: 340px;
+  max-width: 100%;
+}
+
+/* 平板：按鈕窄一點 */
+@media (max-width: 1023px) {
+  .item {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+
+  .item__delete {
+    width: 160px;
+  }
+}
+
+/* 手機：書名與資訊在上，「刪除」在下並滿寬 */
+@media (max-width: 767px) {
+  .summary {
+    padding-left: 0;
+  }
+
+  .item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 20px;
+    padding-top: 24px;
+    padding-bottom: 24px;
+  }
+
+  .item__main {
+    gap: 16px;
+  }
+
+  .item__delete {
+    width: 100%;
+  }
+
+  .guest {
+    margin-top: 24px;
+  }
+
+  .guest__action {
+    margin-top: 32px;
+  }
+}
+</style>
+```
+
+**和步驟 9 比，改了哪些地方**
+- `import BookCover`。
+- 卡片裡新增 `<div class="item__main">`，把封面縮圖和書名資訊包在一起：
+  ```
+  桌機：[ 縮圖 | 書名／作者 | ISBN ] ………………… [ 刪除 ]
+  手機：[ 縮圖 | 書名／作者 | ISBN ]
+        [            刪除            ]
+  ```
+  手機版只有外層 `.item` 改成上下排列，`.item__main` 仍然是左右排列，所以縮圖會和書名留在同一列。
+- `<BookCover size="sm" lazy />`：收藏可能很多，用延遲載入。
+
+### 對應的 Scenario（BDD v1.3.0）
+
+| BDD Scenario | 驗證方式 | 結果 |
+|---|---|---|
+| 查詢結果顯示書籍封面 | 瀏覽器實測（Clean Code） | ✅ |
+| 沒有封面的書籍顯示空白封面框 | 瀏覽器實測（侘寂） | ✅ 沒有錯誤框、沒有 Toast |
+| 收藏清單的每本書顯示封面 | 瀏覽器實測（Clean Code＋侘寂＋提問的設計） | ✅ |
+
+封面只改前端，後端的 67 個自動測試不受影響。前端沒有自動測試（建立專案時沒選 Vitest），所以封面的驗收靠瀏覽器實測與 MANUAL_TEST.md 的手動測試項目。
+
+### 怎麼驗證成功
+
+**驗證 1：能編譯**
+```bash
+cd frontend
+npm run build
+```
+實測結果（2026-10-21）：`✓ 54 modules transformed`、`✓ built`。
+> 小提醒：Vite 只會編譯「有被 import 的檔案」。`BookCover.vue` 剛建立、還沒被頁面使用時 build 一定成功，但那其實沒有檢查到它；放進頁面後模組數從 37 變成 54，才是真的編譯到了。
+
+**驗證 2：瀏覽器實測（2026-10-21）**
+
+首頁：
+| 寬度 | 書籍 | 結果 |
+|---|---|---|
+| 1280 | Clean Code | 左封面 120×180（圖片 180×238）、右資訊；alt「《Clean Code》封面」；加入收藏按鈕 = 卡片寬 35% |
+| 1280 | 侘寂 | 只剩 120×180 空白框（米白底、1.5px 淺棕邊框），沒有錯誤框與 Toast |
+| 1280 | 侘寂 → Clean Code | 封面重新載入（換書會重設狀態） |
+| 768 | Clean Code | 左封面右資訊；加入收藏按鈕 = 卡片寬 50% |
+| 375 | Clean Code | 封面 100×150 置中在上方、資訊在下；按鈕滿寬；沒有水平捲軸 |
+
+收藏頁（提問的設計、Clean Code、侘寂）：
+| 寬度 | 結果 |
+|---|---|
+| 1280 | 縮圖 64×96 在最左邊；Clean Code 有封面、另外兩本空白框；「刪除」在右側；`loading="lazy"` |
+| 768 | 同桌機 |
+| 375 | 縮圖 56×84 與書名同一列；「刪除」在下方滿寬；沒有水平捲軸 |
+
+> 實測時加入的 2 本收藏已刪除。
+
+**常見問題**
+| 症狀 | 原因與處理 |
+|---|---|
+| 封面一直是空白框 | 這本書在 Open Library 沒有封面（中文書很常見），屬於正常行為。可以直接在瀏覽器打開 `https://covers.openlibrary.org/b/isbn/{ISBN}-M.jpg?default=false` 確認：顯示 404 就是真的沒有 |
+| 封面要等一兩秒才出現 | 圖片是從 Open Library 下載的，速度取決於對方伺服器；載入前先顯示空白框 |
+| 換書後封面沒更新 | 檢查 `BookCover.vue` 的 `watch` 是否還在 |
 
 ---
 
