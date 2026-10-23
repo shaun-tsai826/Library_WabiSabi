@@ -1,8 +1,8 @@
 ---
 name: library-project-prompt
-version: v1.5.0
-date: 2026-10-21
-requires: BDD.md v1.4.0, DESIGN.md v1.3.0
+version: v1.6.0
+date: 2026-10-23
+requires: BDD.md v1.5.0, DESIGN.md v1.4.0
 ---
 
 # LIBRARY / 侘寂書閣：Claude Code 專案提示詞
@@ -12,8 +12,8 @@ requires: BDD.md v1.4.0, DESIGN.md v1.3.0
 版本紀錄在本文件最下方，不需要貼進去。
 
 ```text
-【提示詞版本】v1.5.0（2026-10-21）
-【對應文件版本】BDD.md v1.4.0、DESIGN.md v1.3.0。若專案內文件的版本與此不同，請先告訴我再開始。
+【提示詞版本】v1.6.0（2026-10-23）
+【對應文件版本】BDD.md v1.5.0、DESIGN.md v1.4.0。若專案內文件的版本與此不同，請先告訴我再開始。
 
 請幫我從零建立「圖書收藏與會員系統」，網站名稱 LIBRARY（侘寂書閣）。
 
@@ -141,6 +141,9 @@ backend/src/main/resources/application-local.properties（不進 git），由我
     收藏頁用種類按鈕篩選，只顯示「全部」＋有書的種類（規格見 DESIGN.md 4.11、4.12）。
 16. 搜尋收藏：純前端篩選已載入的收藏，範圍為書名、作者、ISBN；不分大小寫、去除前後空白、邊輸入邊篩選；
     與種類篩選同時成立。「共 N 本」顯示總數，篩選中另外顯示「顯示 X 本」；沒有符合的顯示「沒有符合條件的收藏」。
+17. 收藏統計 Dashboard：收藏頁可切換「清單／統計」（狀態記在網址 /favorites?view=stats）。統計在前端以全部收藏計算，
+    不受搜尋與種類篩選影響：3 張總覽數字卡（收藏總數、本月新增、最多的種類）、種類比例甜甜圈圖（CSS conic-gradient）、
+    最近 12 個月每月新增本數折線圖（手寫 SVG）。不使用圖表套件；色票與版面見 DESIGN.md 第 2 節、4.13～4.16、5.3-c。
 
 【資料表】
 - users：id、nickname、nickname_lower（唯一）、mobile（唯一）、created_at
@@ -159,7 +162,7 @@ backend/src/main/resources/application-local.properties（不進 git），由我
 - GET /api/categories：公開。回傳種類清單（依固定順序）
 - PUT /api/favorites/{id}/category：需登入，內容 {"category": "小說"}；200 已更新書籍種類；400 書籍種類不正確；
   404 不存在或不是本人的收藏
-- GET /api/favorites 的每筆資料加上 category（空值時回「未分類」）
+- GET /api/favorites 的每筆資料加上 category（空值時回「未分類」）與 createdAt（收藏時間，ISO 格式）
 
 【前端頁面】
 共 4 個路由、7 張線稿，詳見 DESIGN.md 第 5 節：
@@ -189,6 +192,11 @@ backend/src/main/resources/application-local.properties（不進 git），由我
 - MAJOR：技術棧或整體架構改變（例如換前端框架、換資料庫）
 - MINOR：新增或調整功能規則、設計決策
 - PATCH：只修正文字、錯字、說明
+
+### v1.6.0（2026-10-23）收藏統計 Dashboard
+- 新增：設計決策 17 收藏統計 Dashboard（清單／統計切換、總覽數字、甜甜圈圖、每月折線圖；前端計算、不使用圖表套件）。
+- 新增：GET /api/favorites 回傳 createdAt。
+- 對應文件：BDD.md v1.5.0、DESIGN.md v1.4.0。
 
 ### v1.5.0（2026-10-21）收藏書籍種類與搜尋
 - 新增：設計決策 15 收藏書籍種類（11 種、預設未分類、清單由後端提供、卡片下拉選單修改、種類按鈕篩選）。

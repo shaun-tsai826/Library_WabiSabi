@@ -25,6 +25,19 @@
   --color-danger-text: #7A2E2E;   /* 錯誤/警示框文字 */
   --color-input-bg: #FFFFFF;      /* 輸入框背景 */
 
+  /* ===== 圖表色票（DESIGN.md v1.4.0，統計檢視用）：依種類清單順序固定對應 ===== */
+  --chart-1: #8E8475;             /* 棕灰：小說 */
+  --chart-2: #A96B6B;             /* 紅土：散文 */
+  --chart-3: #7A8B6F;             /* 苔綠：詩 */
+  --chart-4: #C2A878;             /* 麥黃：人文歷史 */
+  --chart-5: #6F7F8C;             /* 灰藍：心理勵志 */
+  --chart-6: #B08E73;             /* 陶土：商業理財 */
+  --chart-7: #9C8AA5;             /* 藤紫：科學 */
+  --chart-8: #5F6B5A;             /* 深苔：電腦資訊 */
+  --chart-9: #D3B9A3;             /* 米褐：藝術設計 */
+  --chart-10: #4A4643;            /* 炭灰：其他 */
+  --chart-uncategorized: #CFC8BE; /* 淺灰：未分類（固定） */
+
   /* ===== 線條與圓角 ===== */
   --line: 1.5px;
   --radius-card: 12px;
