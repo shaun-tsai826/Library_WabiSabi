@@ -1,6 +1,6 @@
 # STEPS.md：LIBRARY / 侘寂書閣 開發步驟紀錄
 
-> 對應文件：BDD.md v1.4.0、DESIGN.md v1.3.0、PROMPT.md v1.5.0（步驟 15 起；步驟 14 對應 BDD v1.3.0、DESIGN v1.2.0；步驟 13 對應 BDD v1.2.0；步驟 0～12 對應 BDD v1.1.0、DESIGN v1.1.0）
+> 對應文件：BDD.md v1.5.0、DESIGN.md v1.4.0、PROMPT.md v1.6.0（步驟 16 起；步驟 15 對應 BDD v1.4.0、DESIGN v1.3.0；步驟 14 對應 BDD v1.3.0、DESIGN v1.2.0；步驟 13 對應 BDD v1.2.0；步驟 0～12 對應 BDD v1.1.0、DESIGN v1.1.0）
 > 這份文件記錄每一步「做了什麼、為什麼這樣做、怎麼確認成功」。照著從頭做一遍，就能自己重建整個專案。
 
 ---
@@ -25,6 +25,7 @@
 - [步驟 13：Open Library 備援資料來源（BDD v1.2.0）](#步驟-13open-library-備援資料來源bdd-v120)
 - [步驟 14：書籍封面（BDD v1.3.0、DESIGN v1.2.0）](#步驟-14書籍封面bdd-v130design-v120)
 - [步驟 15：收藏書籍種類與搜尋（BDD v1.4.0、DESIGN v1.3.0）](#步驟-15收藏書籍種類與搜尋bdd-v140design-v130)
+- [步驟 16：收藏統計 Dashboard（BDD v1.5.0、DESIGN v1.4.0）](#步驟-16收藏統計-dashboardbdd-v150design-v140)
 - [如何快速上手](#如何快速上手)
 
 ---
@@ -10204,6 +10205,1315 @@ git push origin --delete feature/favorite-category-search
 - `git pull --ff-only`：先確認本機的 `main` 和 GitHub 一致；如果 GitHub 上有你電腦沒有的變更，它會停下來，不會亂合併。
 - `git merge --no-ff`：一定產生合併 commit，`git log --graph` 會清楚畫出分支合併進來的形狀。
 - 最後兩行分別刪除本機和 GitHub 上的分支。
+
+---
+
+## 步驟 16：收藏統計 Dashboard（BDD v1.5.0、DESIGN v1.4.0）
+
+### 目標
+收藏頁新功能規劃的**第 3 階段**：收藏頁多一個「統計」檢視，一眼看出自己的書櫃長什麼樣子。
+1. **清單／統計切換**：副標右側兩顆按鈕，狀態記在網址（`/favorites?view=stats`），重新整理後還在。
+2. **總覽數字**：收藏總數、本月新增、最多的種類。
+3. **種類比例**：甜甜圈形狀的圓餅圖＋圖例（種類、本數、比例）。
+4. **每月收藏趨勢**：最近 12 個月，每個月新增幾本的折線圖。
+
+| 順序 | 做什麼 | commit |
+|---|---|---|
+| 1 | 從 `main` 開分支 `feature/favorite-dashboard` | — |
+| 2 | BDD.md v1.5.0、DESIGN.md v1.4.0、PROMPT.md v1.6.0 | `684f0d9` |
+| 3 | 後端：收藏清單回傳收藏日期 `createdAt`、1 個測試 | `567846a` |
+| 4 | 前端：統計計算、4 個元件、收藏頁切換 | `98cab94` |
+| 5 | 瀏覽器實測、文件（本節與 MANUAL_TEST.md） | 本次 |
+| 6 | 在本機把分支合併進 `main`（保留合併 commit）、push、刪除分支 | 合併 commit |
+
+**沒有安裝任何圖表套件**：圓餅圖用 CSS 的 `conic-gradient`，折線圖手寫 SVG。程式碼都看得到、改得動，也不會讓網站變大。
+
+### 名詞先解釋
+- **Dashboard（儀表板）**：把資料整理成數字和圖表的一頁，像汽車儀表板一樣「一眼就看懂」。
+- **`conic-gradient`（圓錐漸層）**：CSS 的背景寫法，從圓心往外看，**順時針一段一段塗顏色**。例如 `conic-gradient(藍 0% 50%, 紅 50% 100%)` 就是右半邊藍、左半邊紅的圓。再蓋一個小圓在中間，就變成甜甜圈。
+- **SVG**：用「座標＋形狀」描述圖片的格式，可以直接寫在 Vue 模板裡。`<polyline>` 是把一串點連起來的折線，`<circle>` 是圓點，`<text>` 是文字。
+- **`viewBox`**：SVG 的「座標系統」。`viewBox="0 0 600 240"` 表示畫布寬 600、高 240 個單位，裡面的形狀都用這套座標擺放。
+- **`ResizeObserver`**：瀏覽器內建的工具，「某個元素的大小改變時通知我」。這裡用來量折線圖外框的寬度。
+- **純函式**：只根據傳進來的資料算出結果，不改畫面、不呼叫 API。同樣的輸入永遠得到同樣的輸出，最容易檢查對錯。
+- **網址參數（query）**：網址 `?` 後面的部分，例如 `?view=stats`。Vue Router 用 `route.query.view` 讀取。
+
+### 建立或修改的檔案
+```
+documents/BDD.md、DESIGN.md、PROMPT.md                         修改
+backend/src/main/java/com/wabisabi/library/
+└── dto/FavoriteResponse.java              修改：回傳 createdAt（收藏時間）
+backend/src/test/java/com/wabisabi/library/
+└── FavoriteApiTest.java                   修改：新增 1 個測試
+frontend/src/
+├── favoriteStats.js                       新增：統計計算（純函式）
+├── styles/base.css                        修改：圖表色票 --chart-1 ～ --chart-10、--chart-uncategorized
+├── components/ViewToggle.vue              新增：清單／統計切換
+├── components/StatTiles.vue               新增：總覽數字卡
+├── components/CategoryPieChart.vue        新增：種類比例圓餅圖＋圖例
+├── components/MonthlyLineChart.vue        新增：每月收藏趨勢折線圖
+└── views/FavoritesView.vue                修改：切換、統計檢視
+```
+
+### 16-1 規格：BDD v1.5.0、DESIGN v1.4.0
+- BDD 新增「需求 11：收藏統計」共 6 個 Scenario（見下方對照表）。範例用「今天是 2026-10-23」，讓每個月份的數字都能寫死、可以驗證。
+- DESIGN 新增 4.13～4.16（切換、數字卡、圓餅圖、折線圖）、5.3(c) 統計檢視版面、3.1 的 RWD 規則，以及第 2 節的圖表色票。
+- **色票依種類清單順序固定**：「小說」永遠是 `--chart-1`、「散文」永遠是 `--chart-2`…，「未分類」固定淺灰。同一種類在任何時候都是同一個顏色，不會因為排序變了就換色。
+- **同數時的排序**：依種類清單順序，但「未分類」排最後（BDD 範例：散文 1 本排在未分類 1 本前面）。「最多的種類」也照這個規則。
+
+### 16-2 後端：收藏清單回傳收藏日期
+
+**`backend/src/main/java/com/wabisabi/library/dto/FavoriteResponse.java`**（修改後全文）
+
+```java
+package com.wabisabi.library.dto;
+
+import java.time.LocalDateTime;
+
+import com.wabisabi.library.common.Categories;
+import com.wabisabi.library.entity.Book;
+import com.wabisabi.library.entity.Favorite;
+
+/**
+ * 收藏清單中的一筆（含書籍資料）：
+ * {"id": 5, "isbn": "9789861343722", "title": "...", "author": "...", "publishDate": "2020-05-01",
+ *  "category": "散文", "createdAt": "2026-10-24T10:15:30.123456"}
+ * id 是「收藏」的編號，前端按「刪除」時用它呼叫 DELETE /api/favorites/{id}。
+ */
+public class FavoriteResponse {
+
+	private Long id;
+	private String isbn;
+	private String title;
+	private String author;
+	private String publishDate;
+	/** 書籍種類；資料庫是空值時回傳「未分類」 */
+	private String category;
+	/** 收藏時間（BDD v1.5.0）：Jackson 會轉成 ISO 格式字串，前端取前 7 個字（例如 2026-10）當月份 */
+	private LocalDateTime createdAt;
+
+	public FavoriteResponse() {
+	}
+
+	public FavoriteResponse(Favorite favorite) {
+		Book book = favorite.getBook();
+		this.id = favorite.getId();
+		this.isbn = book.getIsbn();
+		this.title = book.getTitle();
+		this.author = book.getAuthor();
+		this.publishDate = book.getPublishDate();
+		this.category = Categories.orDefault(favorite.getCategory());
+		this.createdAt = favorite.getCreatedAt();
+	}
+
+	public Long getId() {
+		return id;
+	}
+
+	public void setId(Long id) {
+		this.id = id;
+	}
+
+	public String getIsbn() {
+		return isbn;
+	}
+
+	public void setIsbn(String isbn) {
+		this.isbn = isbn;
+	}
+
+	public String getTitle() {
+		return title;
+	}
+
+	public void setTitle(String title) {
+		this.title = title;
+	}
+
+	public String getAuthor() {
+		return author;
+	}
+
+	public void setAuthor(String author) {
+		this.author = author;
+	}
+
+	public String getPublishDate() {
+		return publishDate;
+	}
+
+	public void setPublishDate(String publishDate) {
+		this.publishDate = publishDate;
+	}
+
+	public String getCategory() {
+		return category;
+	}
+
+	public void setCategory(String category) {
+		this.category = category;
+	}
+
+	public LocalDateTime getCreatedAt() {
+		return createdAt;
+	}
+
+	public void setCreatedAt(LocalDateTime createdAt) {
+		this.createdAt = createdAt;
+	}
+}
+```
+
+**`backend/src/test/java/com/wabisabi/library/FavoriteApiTest.java`**（新增的測試；另外 import 了 `LocalDate`、`matchesPattern`、`startsWith`）
+```java
+	@Test
+	@DisplayName("Scenario: 收藏清單回傳收藏日期 (createdAt，ISO 格式，前 10 碼是今天)")
+	void listIncludesCreatedAt() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(status().isOk())
+				// 例如 2026-10-24T10:15:30.123456：前端取前 7 個字（2026-10）當月份
+				.andExpect(jsonPath("$[0].createdAt").value(matchesPattern("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*")))
+				.andExpect(jsonPath("$[0].createdAt").value(startsWith(LocalDate.now().toString())));
+	}
+```
+
+**白話解釋**
+- `favorites.created_at` 這個欄位從步驟 2 就有了（加入收藏時自動填入），只是之前沒有回傳給前端。這次只是**多一個欄位**，資料表不用改。
+- `LocalDateTime` 經過 Jackson 轉成 JSON 時，會變成 ISO 格式字串 `"2026-10-24T10:15:30.123456"`。前端只要取前 7 個字 `2026-10` 就知道是哪個月。
+- **統計為什麼在前端算、不另外寫 API？** 統計用的資料就是收藏清單本身，收藏頁本來就已經載入了。一個人的收藏頂多幾百本，在瀏覽器裡算完全沒問題；也不用為了統計多寫一支 API 和一堆測試。
+- 測試用 `matchesPattern` 檢查格式（`年-月-日T時:分:秒`），用 `startsWith(今天)` 檢查日期是今天。
+
+### 16-3 統計計算：favoriteStats.js
+
+**`frontend/src/favoriteStats.js`**
+
+```js
+// 收藏統計的計算（BDD v1.5.0 需求 11、DESIGN.md 4.14～4.16）。
+// 這裡都是「純函式」：給收藏清單，回傳算好的數字，不碰畫面也不呼叫 API，方便閱讀與檢查。
+//
+// 每筆收藏長這樣（GET /api/favorites）：
+//   { id, isbn, title, author, publishDate, category: '散文', createdAt: '2026-10-24T10:15:30.123456' }
+
+const UNCATEGORIZED = '未分類'
+
+/** 把日期轉成「年-月」字串，例如 2026-10（月份補 0，和 createdAt 的前 7 個字同格式） */
+function monthKey(date) {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  return `${date.getFullYear()}-${month}`
+}
+
+/**
+ * 每個種類的顏色（DESIGN.md 第 2 節圖表色票）。
+ * 種類清單第 0 個是「未分類」，所以「小說」是第 1 個 → --chart-1，依此類推。
+ * 萬一出現清單以外的種類（理論上不會），用「其他」的顏色。
+ */
+export function categoryColor(name, categories) {
+  if (name === UNCATEGORIZED) {
+    return 'var(--chart-uncategorized)'
+  }
+  const index = categories.indexOf(name)
+  return index > 0 ? `var(--chart-${index})` : 'var(--chart-10)'
+}
+
+/**
+ * 同數時的排序：依種類清單順序，但「未分類」排最後（BDD v1.5.0 範例：散文 1 本排在未分類 1 本前面）。
+ * 清單以外的種類（理論上不會）排在未分類前面。
+ */
+function orderOf(name, categories) {
+  if (name === UNCATEGORIZED) {
+    return categories.length + 1
+  }
+  const index = categories.indexOf(name)
+  return index === -1 ? categories.length : index
+}
+
+/**
+ * 種類比例（圓餅圖與圖例）：依本數由多到少，同數時依種類清單順序（未分類最後）。
+ * 回傳 [{ name: '心理勵志', count: 2, percent: 50, color: 'var(--chart-5)' }, ...]
+ */
+export function categoryBreakdown(favorites, categories) {
+  const counts = {}
+  for (const item of favorites) {
+    counts[item.category] = (counts[item.category] || 0) + 1
+  }
+
+  const total = favorites.length
+  return Object.keys(counts)
+    .map((name) => ({
+      name,
+      count: counts[name],
+      percent: Math.round((counts[name] / total) * 100), // 四捨五入到整數
+      color: categoryColor(name, categories),
+    }))
+    .sort((a, b) => b.count - a.count || orderOf(a.name, categories) - orderOf(b.name, categories))
+}
+
+/**
+ * 總覽數字卡：收藏總數、本月新增、最多的種類。
+ * today 可以傳入日期（方便說明與測試）；沒傳就用今天。
+ */
+export function summary(favorites, categories, today = new Date()) {
+  const thisMonth = monthKey(today)
+  const breakdown = categoryBreakdown(favorites, categories)
+  return {
+    total: favorites.length,
+    addedThisMonth: favorites.filter((item) => item.createdAt.slice(0, 7) === thisMonth).length,
+    // breakdown 已經依本數排好，第一個就是最多的種類（同數時是清單中較前面的）
+    topCategory: breakdown.length > 0 ? breakdown[0].name : '—',
+  }
+}
+
+/**
+ * 最近 12 個月（含本月）每個月新增的收藏本數，由舊到新。
+ * 回傳 [{ key: '2025-11', year: 2025, month: 11, count: 0 }, ..., { key: '2026-10', year: 2026, month: 10, count: 3 }]
+ */
+export function monthlyCounts(favorites, today = new Date()) {
+  const months = []
+  for (let i = 11; i >= 0; i--) {
+    // new Date(年, 月 - i, 1)：月份小於 0 時 JavaScript 會自動往前一年，例如 10 月往前 11 個月是去年 11 月
+    const date = new Date(today.getFullYear(), today.getMonth() - i, 1)
+    months.push({ key: monthKey(date), year: date.getFullYear(), month: date.getMonth() + 1, count: 0 })
+  }
+
+  for (const item of favorites) {
+    const month = months.find((m) => m.key === item.createdAt.slice(0, 7))
+    if (month) {
+      month.count++ // 12 個月以前的收藏找不到對應月份，就不算進來
+    }
+  }
+  return months
+}
+```
+
+**白話解釋**
+- 4 個函式都是**純函式**：給收藏清單，回傳算好的結果。畫面元件只負責「畫」，計算全在這裡，要檢查數字對不對只看這一個檔案。
+- `summary` 和 `monthlyCounts` 的最後一個參數 `today = new Date()`：平常不傳就用今天；說明或檢查時可以傳入 `new Date(2026, 9, 23)`，重現 BDD 範例的「今天是 2026-10-23」。（JavaScript 的月份從 0 開始，所以 10 月寫 `9`。）
+- `monthlyCounts` 的 `new Date(年, 月 - i, 1)`：月份變成負數時，JavaScript 會**自動往前一年**。例如今天 2026 年 10 月，往前 11 個月 → 2025 年 11 月。不用自己處理跨年。
+- `categoryBreakdown` 的 `sort`：`b.count - a.count` 讓本數多的排前面；本數相同（結果是 0）時，`||` 會改用 `orderOf` 比較種類清單順序。
+- 比例用 `Math.round` 四捨五入到整數，所以 3 本各 1 本時會顯示 33%、33%、33%（加起來 99%），這是正常的。
+
+### 16-4 圖表色票：base.css
+
+**`frontend/src/styles/base.css`**（在 `:root` 裡、`--color-input-bg` 下方新增）
+```css
+  /* ===== 圖表色票（DESIGN.md v1.4.0，統計檢視用）：依種類清單順序固定對應 ===== */
+  --chart-1: #8E8475;             /* 棕灰：小說 */
+  --chart-2: #A96B6B;             /* 紅土：散文 */
+  --chart-3: #7A8B6F;             /* 苔綠：詩 */
+  --chart-4: #C2A878;             /* 麥黃：人文歷史 */
+  --chart-5: #6F7F8C;             /* 灰藍：心理勵志 */
+  --chart-6: #B08E73;             /* 陶土：商業理財 */
+  --chart-7: #9C8AA5;             /* 藤紫：科學 */
+  --chart-8: #5F6B5A;             /* 深苔：電腦資訊 */
+  --chart-9: #D3B9A3;             /* 米褐：藝術設計 */
+  --chart-10: #4A4643;            /* 炭灰：其他 */
+  --chart-uncategorized: #CFC8BE; /* 淺灰：未分類（固定） */
+```
+- 全部是低彩度的大地色，和侘寂風的米白、暖灰放在一起不會太跳。
+- `favoriteStats.js` 的 `categoryColor` 回傳的是 `'var(--chart-5)'` 這樣的字串，直接放進 `style` 就會用到這裡的顏色。以後要換色只改這裡。
+
+### 16-5 元件：切換、數字卡、圓餅圖、折線圖
+
+**`frontend/src/components/ViewToggle.vue`**
+
+```vue
+<!--
+  清單／統計切換（DESIGN.md 4.13）：兩個膠囊按鈕，樣式和種類按鈕列（4.11）相同。
+  用法：<ViewToggle v-model="view" />
+    v-model：'list'（清單）或 'stats'（統計）
+-->
+<script setup>
+const view = defineModel({ type: String, default: 'list' })
+
+const options = [
+  { value: 'list', label: '清單' },
+  { value: 'stats', label: '統計' },
+]
+</script>
+
+<template>
+  <div class="toggle" role="group" aria-label="切換檢視方式">
+    <button
+      v-for="option in options"
+      :key="option.value"
+      type="button"
+      :class="['chip', { 'is-selected': view === option.value }]"
+      :aria-pressed="view === option.value"
+      @click="view = option.value"
+    >
+      {{ option.label }}
+    </button>
+  </div>
+</template>
+
+<style scoped>
+.toggle {
+  display: flex;
+  gap: 8px;
+}
+
+/* 膠囊形狀的按鈕（同 CategoryChips） */
+.chip {
+  min-height: var(--tap-min);
+  padding: 0 20px;
+  background: var(--color-surface);
+  border: var(--line) solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--color-text-muted);
+}
+
+.chip.is-selected {
+  background: var(--color-text);
+  border-color: var(--color-text);
+  color: var(--color-bg);
+}
+
+@media (max-width: 767px) {
+  .chip {
+    padding: 0 16px;
+    font-size: 15px;
+  }
+}
+</style>
+```
+
+**`frontend/src/components/StatTiles.vue`**
+
+```vue
+<!--
+  總覽數字卡（DESIGN.md 4.14）：收藏總數、本月新增、最多的種類，3 張一列（手機 1 欄）。
+  用法：<StatTiles :total="4" :added-this-month="3" top-category="心理勵志" />
+-->
+<script setup>
+defineProps({
+  total: { type: Number, required: true },
+  addedThisMonth: { type: Number, required: true },
+  topCategory: { type: String, required: true },
+})
+</script>
+
+<template>
+  <!-- dl：「標題／數值」成對的清單，螢幕報讀軟體會唸成「收藏總數，4 本」 -->
+  <dl class="tiles">
+    <div class="tile">
+      <dt class="tile__label">收藏總數</dt>
+      <dd class="tile__value">{{ total }} 本</dd>
+    </div>
+    <div class="tile">
+      <dt class="tile__label">本月新增</dt>
+      <dd class="tile__value">{{ addedThisMonth }} 本</dd>
+    </div>
+    <div class="tile">
+      <dt class="tile__label">最多的種類</dt>
+      <dd class="tile__value">{{ topCategory }}</dd>
+    </div>
+  </dl>
+</template>
+
+<style scoped>
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr); /* 3 張一樣寬 */
+  gap: 24px;
+  margin: 0;
+}
+
+/* 4.3 卡片的縮小版：內距 24px */
+.tile {
+  padding: 24px;
+  background: var(--color-surface);
+  border: var(--line) solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+
+.tile__label {
+  margin-bottom: 8px;
+  color: var(--color-text-muted);
+  font-size: 0.9em;
+}
+
+.tile__value {
+  margin: 0;
+  font-size: 1.6em;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  .tiles {
+    grid-template-columns: 1fr; /* 手機：上下排成 1 欄 */
+    gap: 16px;
+  }
+}
+</style>
+```
+
+**`frontend/src/components/CategoryPieChart.vue`**
+
+```vue
+<!--
+  種類比例圓餅圖（DESIGN.md 4.15）：中間挖空的甜甜圈＋右側圖例（手機改成上下排列）。
+  用法：<CategoryPieChart :total="4" :items="[{ name: '心理勵志', count: 2, percent: 50, color: 'var(--chart-5)' }]" />
+    items：favoriteStats.js 的 categoryBreakdown() 算好的結果（已排序）
+-->
+<script setup>
+import { computed } from 'vue'
+
+const props = defineProps({
+  total: { type: Number, required: true },
+  items: { type: Array, required: true },
+})
+
+/**
+ * conic-gradient：從 12 點鐘方向順時針，一段一段塗上顏色。
+ * 例如 [心理勵志 50%、散文 25%、未分類 25%] 會變成
+ *   conic-gradient(灰藍 0% 50%, 紅土 50% 75%, 淺灰 75% 100%)
+ * 這裡用「本數 ÷ 總數」的精確比例，不用四捨五入後的 percent，才不會加起來不是 100%。
+ */
+const background = computed(() => {
+  let start = 0
+  const parts = props.items.map((item) => {
+    const end = start + (item.count / props.total) * 100
+    const part = `${item.color} ${start}% ${end}%`
+    start = end
+    return part
+  })
+  return `conic-gradient(${parts.join(', ')})`
+})
+</script>
+
+<template>
+  <div class="pie">
+    <!-- 圖形本身對螢幕報讀軟體隱藏，資料由右側圖例文字提供 -->
+    <div class="pie__donut" :style="{ background }" aria-hidden="true">
+      <div class="pie__hole">{{ total }} 本</div>
+    </div>
+
+    <ul class="legend">
+      <li v-for="item in items" :key="item.name" class="legend__row">
+        <span class="legend__swatch" :style="{ background: item.color }" aria-hidden="true"></span>
+        <span class="legend__name">{{ item.name }}</span>
+        <span class="legend__count">{{ item.count }} 本</span>
+        <span class="legend__percent">{{ item.percent }}%</span>
+      </li>
+    </ul>
+  </div>
+</template>
+
+<style scoped>
+.pie {
+  display: flex;
+  align-items: center;
+  gap: 48px;
+}
+
+/* 甜甜圈：直徑 200px 的圓 */
+.pie__donut {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+}
+
+/* 中間挖空約 60%：用卡片底色的圓蓋在上面 */
+.pie__hole {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60%;
+  height: 60%;
+  border-radius: 50%;
+  background: var(--color-surface);
+  font-weight: 700;
+}
+
+/* 圖例：■ 種類　本數　比例，對齊成三欄 */
+.legend {
+  display: grid;
+  grid-template-columns: auto auto auto auto;
+  gap: 12px 16px;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 讓每個 li 的 4 個 span 直接參與外層的格線，欄位才會上下對齊 */
+.legend__row {
+  display: contents;
+}
+
+.legend__swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}
+
+.legend__count,
+.legend__percent {
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+@media (max-width: 767px) {
+  .pie {
+    flex-direction: column; /* 甜甜圈在上置中、圖例在下 */
+    gap: 24px;
+  }
+
+  .pie__donut {
+    width: 160px;
+    height: 160px;
+  }
+}
+</style>
+```
+
+**`frontend/src/components/MonthlyLineChart.vue`**
+
+```vue
+<!--
+  每月收藏趨勢折線圖（DESIGN.md 4.16）：手寫 SVG，不用另外安裝圖表套件。
+  用法：<MonthlyLineChart :months="[{ key: '2025-11', year: 2025, month: 11, count: 0 }, ...]" />
+    months：favoriteStats.js 的 monthlyCounts() 算好的 12 個月（由舊到新）
+
+  寬度：先量出外框實際有幾 px，再讓 SVG 的座標寬度等於它（1 個座標單位 = 1px），
+  這樣不管卡片多寬，文字大小都固定，不會被放大或縮小。
+-->
+<script setup>
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+
+const props = defineProps({
+  months: { type: Array, required: true },
+})
+
+const HEIGHT = 240 // 整張圖的高度（px）
+const PAD = { top: 32, right: 20, bottom: 56, left: 36 } // 四周留給數字與月份的空間
+const NARROW = 480 // 圖寬小於這個值（手機）時，只標單數月份，避免文字重疊
+
+const wrapper = ref(null)
+const width = ref(600) // 量到實際寬度之前先用 600
+let observer = null
+
+onMounted(() => {
+  // ResizeObserver：外框寬度一改變（例如轉動手機、縮放視窗）就重新量
+  observer = new ResizeObserver((entries) => {
+    width.value = Math.max(Math.round(entries[0].contentRect.width), 240)
+  })
+  observer.observe(wrapper.value)
+})
+
+onBeforeUnmount(() => {
+  observer.disconnect() // 離開頁面時停止量測
+})
+
+/** 縱軸最大值：最多那個月的本數，至少為 1（全部都是 0 時線才不會擠在一起） */
+const maxCount = computed(() => Math.max(1, ...props.months.map((m) => m.count)))
+
+/** 每個月份點的座標，以及要不要標月份、年份 */
+const points = computed(() => {
+  const plotWidth = width.value - PAD.left - PAD.right
+  const plotHeight = HEIGHT - PAD.top - PAD.bottom
+  const step = plotWidth / (props.months.length - 1)
+  const narrow = width.value < NARROW
+
+  return props.months.map((m, index) => ({
+    ...m,
+    x: PAD.left + step * index,
+    y: PAD.top + plotHeight * (1 - m.count / maxCount.value), // 本數越多越上面
+    showMonth: !narrow || m.month % 2 === 1,
+    showYear: index === 0 || m.month === 1, // 第一個月份與每年 1 月加註年份
+  }))
+})
+
+/** 折線：把 12 個點用「x,y x,y ...」串起來給 <polyline> */
+const linePoints = computed(() => points.value.map((p) => `${p.x},${p.y}`).join(' '))
+
+/** 背景橫線（虛線）：0、中間、最大值；最大值是 1 時只畫 0 和 1 */
+const gridLines = computed(() => {
+  const plotHeight = HEIGHT - PAD.top - PAD.bottom
+  const values = maxCount.value >= 2 ? [0, maxCount.value / 2, maxCount.value] : [0, maxCount.value]
+  return values.map((value) => ({
+    // 中間那條不是整數時（例如最大值 3 → 1.5），不標數字
+    label: Number.isInteger(value) ? value : '',
+    y: PAD.top + plotHeight * (1 - value / maxCount.value),
+  }))
+})
+</script>
+
+<template>
+  <div ref="wrapper" class="chart">
+    <svg
+      :viewBox="`0 0 ${width} ${HEIGHT}`"
+      :width="width"
+      :height="HEIGHT"
+      role="img"
+      aria-label="最近 12 個月的收藏趨勢"
+    >
+      <!-- 背景橫線與左側刻度 -->
+      <g v-for="line in gridLines" :key="line.y">
+        <line class="grid" :x1="PAD.left" :x2="width - PAD.right" :y1="line.y" :y2="line.y" />
+        <text class="axis" :x="PAD.left - 10" :y="line.y + 4" text-anchor="end">{{ line.label }}</text>
+      </g>
+
+      <!-- 折線 -->
+      <polyline class="line" :points="linePoints" />
+
+      <g v-for="point in points" :key="point.key">
+        <!-- 資料點 -->
+        <circle class="dot" :cx="point.x" :cy="point.y" r="4" />
+        <!-- 數值不是 0 才在點的上方標數字 -->
+        <text v-if="point.count > 0" class="value" :x="point.x" :y="point.y - 12" text-anchor="middle">
+          {{ point.count }}
+        </text>
+        <!-- 橫軸：月份；年份在月份下方 -->
+        <text v-if="point.showMonth" class="axis" :x="point.x" :y="HEIGHT - PAD.bottom + 24" text-anchor="middle">
+          {{ point.month }}月
+        </text>
+        <text v-if="point.showYear" class="axis" :x="point.x" :y="HEIGHT - PAD.bottom + 44" text-anchor="middle">
+          {{ point.year }}
+        </text>
+      </g>
+    </svg>
+  </div>
+</template>
+
+<style scoped>
+.chart {
+  width: 100%;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+.grid {
+  stroke: var(--color-border);
+  stroke-width: 1;
+  stroke-dasharray: 4 4; /* 虛線 */
+}
+
+.line {
+  fill: none;
+  stroke: var(--color-text);
+  stroke-width: var(--line);
+}
+
+.dot {
+  fill: var(--color-text);
+}
+
+.value {
+  fill: var(--color-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.axis {
+  fill: var(--color-text-muted);
+  font-size: 13px;
+}
+</style>
+```
+
+**白話解釋**
+- **ViewToggle**：和步驟 15 的 `CategoryChips` 同樣是膠囊按鈕、同樣用 `defineModel()` 支援 `v-model`，只是固定兩個選項。
+- **StatTiles**：用 `<dl>`（定義清單）＋ `<dt>`（標題）＋ `<dd>`（數值）。外觀和一般 `div` 一樣，但螢幕報讀軟體會唸成「收藏總數，4 本」。`grid-template-columns: repeat(3, 1fr)` 是「3 欄一樣寬」，手機改成 `1fr`（1 欄）。
+- **CategoryPieChart**：
+  - `background` 這個 `computed` 一段一段組出 `conic-gradient(...)`，每一段的終點 = 起點＋這個種類佔的百分比。用**精確比例**（`count / total`）而不是四捨五入後的 `percent`，圓才會剛好塗滿 100%。
+  - 中間的洞是一個用卡片底色（`--color-surface`）塗滿的小圓，寬高 60%，蓋在甜甜圈正中央。
+  - 圖例用 `display: grid` 排成 4 欄，每個 `<li>` 設 `display: contents`（「我自己不佔位置，讓我的子元素直接參與外層格線」），種類名稱、本數、比例才會上下對齊。
+- **MonthlyLineChart**：
+  - **為什麼要量寬度？** SVG 設 `width: 100%` 會整張等比例縮放：卡片寬 1100px 時文字被放大 2 倍，手機上又被縮成很小。所以先用 `ResizeObserver` 量出外框實際幾 px，再讓 `viewBox` 的寬度等於它（1 個單位 = 1px），文字永遠是 13～14px。
+  - 座標怎麼算：x 是「左邊留白＋第幾個月 × 每格寬度」；y 是「上方留白＋圖高 × (1 − 本數 ÷ 最大值)」。本數越多 `1 − …` 越小，點就越**上面**（SVG 的 y 軸是往下增加的）。
+  - 縱軸最大值至少為 1：如果全部都是 0，`0 ÷ 0` 會算不出來，線也會擠在一起。
+  - 圖寬小於 480px（手機）時，`showMonth` 只留單數月份，避免 12 個月份文字重疊（DESIGN 3.1）。
+  - `onBeforeUnmount` 裡呼叫 `observer.disconnect()`：離開頁面時停止量測，養成「有開就要關」的習慣。
+
+### 16-6 收藏頁：FavoritesView.vue（修改後全文）
+
+**`frontend/src/views/FavoritesView.vue`**
+
+```vue
+<!--
+  收藏頁 /favorites（DESIGN.md 5.3）：需要登入（路由守衛把關）。
+  (a) 已登入：收藏清單，每本書旁邊有「刪除」；沒有收藏時顯示空狀態框。
+      v1.4.0：搜尋框、種類按鈕列、卡片內的種類下拉選單（BDD 需求 9、10）。
+  (c) v1.5.0 統計檢視 /favorites?view=stats：總覽數字、種類比例圓餅圖、每月收藏趨勢折線圖（BDD 需求 11）。
+  (b) 未登入提示畫面：只在「停留在本頁時 Session 失效（API 回 401）」時顯示（備用）。
+-->
+<script setup>
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import PageTitle from '@/components/PageTitle.vue'
+import BaseCard from '@/components/BaseCard.vue'
+import BaseInput from '@/components/BaseInput.vue'
+import BaseSelect from '@/components/BaseSelect.vue'
+import BookCover from '@/components/BookCover.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import CategoryChips from '@/components/CategoryChips.vue'
+import ViewToggle from '@/components/ViewToggle.vue'
+import StatTiles from '@/components/StatTiles.vue'
+import CategoryPieChart from '@/components/CategoryPieChart.vue'
+import MonthlyLineChart from '@/components/MonthlyLineChart.vue'
+import ErrorBox from '@/components/ErrorBox.vue'
+import EmptyBox from '@/components/EmptyBox.vue'
+import { api } from '@/api'
+import { auth, setLoggedOut } from '@/auth'
+import { showToast } from '@/toast'
+import { MESSAGES } from '@/messages'
+import { summary, categoryBreakdown, monthlyCounts } from '@/favoriteStats'
+
+const route = useRoute() // 目前的網址資訊（例如 ?view=stats）
+const router = useRouter()
+
+const favorites = ref([]) // 收藏清單
+const categories = ref([]) // 種類清單（從後端 GET /api/categories 取得）
+const loading = ref(true) // 第一次載入中
+const sessionExpired = ref(false) // Session 失效 → 顯示未登入提示畫面
+const errorMessage = ref('') // 其他錯誤（例如連不上後端）
+const deletingId = ref(null) // 正在刪除哪一筆（按鈕暫時停用）
+const savingCategoryId = ref(null) // 正在儲存哪一筆的種類（下拉選單暫時停用）
+
+// ===== 篩選條件（BDD v1.4.0 需求 9、10） =====
+const keyword = ref('') // 搜尋框的內容
+const selectedCategory = ref('') // 選中的種類；'' 代表「全部」
+
+// ===== 清單／統計切換（BDD v1.5.0 需求 11、DESIGN.md 4.13） =====
+// 狀態記在網址：/favorites 是清單、/favorites?view=stats 是統計，所以重新整理後還會停在原本的檢視。
+// computed 的 get / set：讀取時看網址，ViewToggle 改值時就換網址。
+const view = computed({
+  get: () => (route.query.view === 'stats' ? 'stats' : 'list'),
+  set: (value) => router.push({ query: value === 'stats' ? { view: 'stats' } : {} }),
+})
+
+// 統計用的數字：一律以「全部收藏」計算（不受搜尋與種類篩選影響）
+const stats = computed(() => summary(favorites.value, categories.value))
+const breakdown = computed(() => categoryBreakdown(favorites.value, categories.value))
+const months = computed(() => monthlyCounts(favorites.value))
+
+// onMounted：頁面顯示出來之後執行一次；收藏與種類清單同時載入
+onMounted(() => {
+  loadFavorites()
+  loadCategories()
+})
+
+async function loadFavorites() {
+  loading.value = true
+  const result = await api.get('/api/favorites')
+  loading.value = false
+
+  if (result.ok) {
+    favorites.value = result.data
+  } else if (result.status === 401) {
+    handleSessionExpired()
+  } else {
+    errorMessage.value = result.data.message
+  }
+}
+
+async function loadCategories() {
+  const result = await api.get('/api/categories')
+  if (result.ok) {
+    categories.value = result.data
+  }
+  // 失敗時清單維持空的：下拉選單仍會顯示每本書目前的種類，只是暫時不能改成別的
+}
+
+// ===== computed：由其他資料「算出來」的值，來源一變就自動重算 =====
+
+/** 種類按鈕：只列出有書的種類，依後端種類清單的順序排列 */
+const chips = computed(() => {
+  const counts = {}
+  for (const item of favorites.value) {
+    counts[item.category] = (counts[item.category] || 0) + 1
+  }
+  // 依種類清單排序；萬一有清單以外的種類（理論上不會），排在最後
+  const ordered = [...categories.value, ...Object.keys(counts).filter((c) => !categories.value.includes(c))]
+  return ordered.filter((name) => counts[name] > 0).map((name) => ({ name, count: counts[name] }))
+})
+
+/** 套用種類與搜尋後，要顯示的收藏 */
+const visibleFavorites = computed(() => {
+  const word = keyword.value.trim().toLowerCase()
+  return favorites.value.filter((item) => {
+    // 條件 1：種類（「全部」就不過濾）
+    if (selectedCategory.value !== '' && item.category !== selectedCategory.value) {
+      return false
+    }
+    // 條件 2：關鍵字（書名、作者、ISBN 任一包含就算符合，不分大小寫）
+    if (word === '') {
+      return true
+    }
+    const text = `${item.title} ${item.author || ''} ${item.isbn}`.toLowerCase()
+    return text.includes(word)
+  })
+})
+
+/** 是否正在篩選（有選種類或有輸入關鍵字）：決定要不要顯示「顯示 X 本」 */
+const isFiltering = computed(() => selectedCategory.value !== '' || keyword.value.trim() !== '')
+
+// 選中的種類變成 0 本時（改了種類或刪除之後），自動切回「全部」（DESIGN.md 4.11）
+watch(chips, (list) => {
+  if (selectedCategory.value !== '' && !list.some((chip) => chip.name === selectedCategory.value)) {
+    selectedCategory.value = ''
+  }
+})
+
+/** 在下拉選單選了新的種類：立刻存檔 */
+async function changeCategory(item, newCategory) {
+  if (newCategory === item.category) {
+    return
+  }
+
+  savingCategoryId.value = item.id
+  const result = await api.put(`/api/favorites/${item.id}/category`, { category: newCategory })
+  savingCategoryId.value = null
+
+  if (result.ok) {
+    item.category = newCategory // 存檔成功才更新畫面；種類按鈕的本數會自動重算
+    showToast(result.data.message) // 已更新書籍種類
+  } else if (result.status === 401) {
+    handleSessionExpired()
+  } else {
+    // 失敗時 item.category 沒變，下拉選單會自動回到原本的種類
+    showToast(result.data.message, 'error')
+  }
+}
+
+/** 按下某本書的「刪除」 */
+async function removeFavorite(item) {
+  // 瀏覽器內建的確認視窗：按「取消」就什麼都不做（DESIGN.md 4.9）
+  if (!window.confirm(MESSAGES.DELETE_CONFIRM)) {
+    return
+  }
+
+  deletingId.value = item.id
+  const result = await api.delete(`/api/favorites/${item.id}`)
+  deletingId.value = null
+
+  if (result.ok) {
+    showToast(result.data.message) // 已移除收藏
+    // 從畫面上的清單拿掉這一筆（「共 N 本」與種類按鈕的本數會自動跟著更新）
+    favorites.value = favorites.value.filter((f) => f.id !== item.id)
+  } else if (result.status === 401) {
+    handleSessionExpired()
+  } else {
+    // 例如另一個分頁已經刪掉了（404 找不到此收藏）：提示後重新載入清單
+    showToast(result.data.message, 'error')
+    loadFavorites()
+  }
+}
+
+function handleSessionExpired() {
+  setLoggedOut() // 導覽列變回「登入 / 註冊」
+  favorites.value = [] // 不再顯示任何收藏內容
+  sessionExpired.value = true
+}
+</script>
+
+<template>
+  <div class="page page--wide">
+    <PageTitle title="我的收藏 — 書籍清單" />
+
+    <!-- (b) 未登入提示畫面（Session 失效時的備用） -->
+    <template v-if="sessionExpired">
+      <ErrorBox center class="guest">
+        <p class="guest__title">您目前為未登入狀態</p>
+        <p class="guest__text">請先登入或註冊會員後，即可檢視與管理您的個人藏書</p>
+      </ErrorBox>
+      <div class="guest__action">
+        <BaseButton class="guest__button" @click="router.push('/login')">前往登入 / 註冊</BaseButton>
+      </div>
+    </template>
+
+    <!-- 其他錯誤 -->
+    <ErrorBox v-else-if="errorMessage">⚠ 錯誤提示：{{ errorMessage }}</ErrorBox>
+
+    <!-- (a) 已登入：清單（載入中先不顯示，避免閃一下「目前還沒有收藏」） -->
+    <template v-else-if="!loading">
+      <!-- 副標＋清單／統計切換（有收藏才顯示切換；手機版切換在副標下方） -->
+      <div class="header">
+        <h2 class="summary">會員「{{ auth.user?.nickname }}」的私人藏書 (共 {{ favorites.length }} 本)</h2>
+        <ViewToggle v-if="favorites.length > 0" v-model="view" />
+      </div>
+
+      <EmptyBox v-if="favorites.length === 0">目前還沒有收藏的書籍</EmptyBox>
+
+      <!-- (c) 統計檢視（DESIGN.md 5.3-c）：總覽數字 → 種類比例 → 每月收藏趨勢 -->
+      <div v-else-if="view === 'stats'" class="stats">
+        <StatTiles :total="stats.total" :added-this-month="stats.addedThisMonth" :top-category="stats.topCategory" />
+
+        <BaseCard class="stats__card">
+          <h3 class="stats__title">種類比例</h3>
+          <CategoryPieChart :total="favorites.length" :items="breakdown" />
+        </BaseCard>
+
+        <BaseCard class="stats__card">
+          <h3 class="stats__title">每月收藏趨勢（最近 12 個月）</h3>
+          <MonthlyLineChart :months="months" />
+        </BaseCard>
+      </div>
+
+      <template v-else>
+        <!-- 搜尋框＋種類按鈕列（DESIGN.md 5.3-a） -->
+        <div class="filters">
+          <BaseInput
+            v-model="keyword"
+            class="filters__search"
+            label="搜尋收藏"
+            placeholder="輸入書名、作者或 ISBN..."
+            type="search"
+          />
+          <CategoryChips v-model="selectedCategory" :total="favorites.length" :chips="chips" />
+          <p v-if="isFiltering" class="filters__count">顯示 {{ visibleFavorites.length }} 本</p>
+        </div>
+
+        <EmptyBox v-if="visibleFavorites.length === 0">{{ MESSAGES.FAVORITES_NO_MATCH }}</EmptyBox>
+
+        <ul v-else class="list">
+          <!-- v-for：清單有幾筆就畫幾張卡片；:key 讓 Vue 分辨每一筆 -->
+          <li v-for="item in visibleFavorites" :key="item.id">
+            <BaseCard class="item">
+              <!-- 左邊：封面縮圖＋書名與資訊（手機版這兩個仍在同一列） -->
+              <div class="item__main">
+                <BookCover :isbn="item.isbn" :title="item.title" size="sm" lazy />
+                <div class="item__info">
+                  <h3 class="item__title">{{ item.title }}</h3>
+                  <p class="item__meta">作者：{{ item.author || '—' }} | ISBN: {{ item.isbn }}</p>
+                  <!-- 種類下拉選單：選完立即存檔（DESIGN.md 4.12） -->
+                  <BaseSelect
+                    class="item__category"
+                    label="種類："
+                    :model-value="item.category"
+                    :options="categories"
+                    :disabled="savingCategoryId === item.id"
+                    @update:model-value="(value) => changeCategory(item, value)"
+                  />
+                </div>
+              </div>
+              <BaseButton
+                variant="danger"
+                class="item__delete"
+                :disabled="deletingId === item.id"
+                @click="removeFavorite(item)"
+              >
+                刪除
+              </BaseButton>
+            </BaseCard>
+          </li>
+        </ul>
+      </template>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+/* 副標在左、清單／統計切換在右 */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+/* 左對齊粗體副標：會員「Cooqle」的私人藏書 (共 2 本) */
+.summary {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+/* ===== 統計檢視 ===== */
+.stats {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.stats__title {
+  margin: 0 0 24px;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+/* ===== 搜尋框＋種類按鈕列 ===== */
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 32px;
+}
+
+.filters__search {
+  width: 50%; /* 桌機約 50%（DESIGN.md 3.1） */
+}
+
+.filters__count {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.95em;
+}
+
+/* ===== 收藏清單 ===== */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px; /* 卡片間距約 24px */
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 左：書名與資訊；右：「刪除」垂直置中 */
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  padding-top: 40px;
+  padding-bottom: 40px;
+}
+
+/* 封面縮圖（64×96）與書名資訊排成一列 */
+.item__main {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-width: 0;
+}
+
+.item__info {
+  min-width: 0; /* 讓長書名可以換行，不會把按鈕擠出去 */
+}
+
+.item__title {
+  margin: 0 0 16px;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+.item__meta {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+/* 種類下拉選單：在作者行下方 */
+.item__category {
+  margin-top: 12px;
+}
+
+.item__delete {
+  flex-shrink: 0;
+  width: 220px;
+}
+
+/* ===== 未登入提示畫面 ===== */
+.guest {
+  margin-top: 48px;
+}
+
+.guest__title {
+  margin: 0 0 8px;
+  font-size: 1.15em;
+}
+
+.guest__text {
+  margin: 0;
+  font-weight: 400;
+}
+
+.guest__action {
+  display: flex;
+  justify-content: center;
+  margin-top: 56px;
+}
+
+.guest__button {
+  width: 340px;
+  max-width: 100%;
+}
+
+/* 平板：按鈕窄一點；搜尋框約 70% */
+@media (max-width: 1023px) {
+  .filters__search {
+    width: 70%;
+  }
+
+  .item {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+
+  .item__delete {
+    width: 160px;
+  }
+}
+
+/* 手機：書名與資訊在上，「刪除」在下並滿寬；搜尋框滿寬 */
+@media (max-width: 767px) {
+  .header {
+    flex-direction: column; /* 切換按鈕移到副標下方、靠左 */
+    align-items: flex-start;
+  }
+
+  .summary {
+    padding-left: 0;
+  }
+
+  .stats {
+    gap: 16px;
+  }
+
+  .filters {
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .filters__search {
+    width: 100%;
+  }
+
+  .item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 20px;
+    padding-top: 24px;
+    padding-bottom: 24px;
+  }
+
+  .item__main {
+    gap: 16px;
+  }
+
+  .item__info {
+    flex: 1; /* 讓手機版的下拉選單可以撐滿資訊欄 */
+  }
+
+  .item__delete {
+    width: 100%;
+  }
+
+  .guest {
+    margin-top: 24px;
+  }
+
+  .guest__action {
+    margin-top: 32px;
+  }
+}
+</style>
+```
+
+**白話解釋**
+- **`view` 是「可以寫入的 computed」**：
+  - `get`：讀網址，`?view=stats` 就是 `'stats'`，其他都是 `'list'`。
+  - `set`：`ViewToggle` 改值時，用 `router.push` 換網址。
+  - 所以「目前是哪個檢視」**只存在網址裡**：重新整理、把網址傳給別人、按瀏覽器的「上一頁」，都會停在對的檢視。
+- 統計用的 `stats`、`breakdown`、`months` 都用 `favorites.value`（全部收藏），**不受搜尋框和種類按鈕影響**（DESIGN 5.3-c）。統計檢視也不顯示搜尋框與種類按鈕。
+- 切換按鈕只在有收藏時顯示；沒有收藏時不管哪個檢視都顯示「目前還沒有收藏的書籍」。
+- 模板的判斷順序：`favorites.length === 0`（空狀態）→ `view === 'stats'`（統計）→ 其他（清單）。`v-if` / `v-else-if` / `v-else` 一次只會顯示其中一個。
+
+### 對應的 Scenario（BDD v1.5.0）
+
+| BDD Scenario | 後端測試 | 瀏覽器實測 |
+|---|---|---|
+| 切換到統計檢視 | 純前端 | ✅（網址、重新整理後保留、搜尋框與種類按鈕隱藏、切回清單） |
+| 統計檢視的總覽數字 | 純前端 | ✅（4 本、本月 3 本、心理勵志） |
+| 種類比例圓餅圖 | 純前端 | ✅（中央 4 本；心理勵志 2 本 50%、散文 1 本 25%、未分類 1 本 25%） |
+| 每月收藏趨勢折線圖 | 純前端 | ✅（2025/11～2026/10；8 月 1、10 月 3，其餘 0） |
+| 沒有收藏時的統計檢視 | 純前端 | ✅ |
+| 收藏清單回傳收藏日期 | ✅ `listIncludesCreatedAt` | — |
+
+### 怎麼驗證成功
+
+**驗證 1：跑測試**
+```bash
+cd backend
+```
+```bash
+./mvnw test
+```
+實測結果（2026-10-24）：共 **76** 個測試全部通過（`FavoriteApiTest` 20 → 21 個）。
+
+**驗證 2：統計計算（BDD 範例資料，today = 2026-10-23）**
+| 函式 | 結果 |
+|---|---|
+| `summary` | `{ total: 4, addedThisMonth: 3, topCategory: '心理勵志' }` |
+| `categoryBreakdown` | 心理勵志 2 本 50% → 散文 1 本 25% → 未分類 1 本 25% |
+| `monthlyCounts` | `2025-11:0 … 2026-07:0 2026-08:1 2026-09:0 2026-10:3` |
+| `monthlyCounts`（today = 2026-01-31） | 2025-02 ～ 2026-01，跨年正確 |
+
+**驗證 3：瀏覽器實測（2026-10-24）**
+| 情境 | 結果 |
+|---|---|
+| 點「統計」 | 網址變成 `/favorites?view=stats`；「統計」按鈕 `aria-pressed="true"`；搜尋框與種類按鈕消失 |
+| 你的真實收藏（3 本，本月加入） | 共 3 本、本月新增 3 本、最多的種類「詩」（三種各 1 本，取清單中最前面的）；圖例三種各 33% |
+| BDD 範例資料（4 本） | 數字、圖例、折線圖都和 Scenario 一致（見上表） |
+| 重新整理 | 仍在統計檢視 |
+| 點「清單」 | 網址回到 `/favorites`，搜尋框與 3 本卡片重新出現 |
+| 沒有收藏 | 「(共 0 本)」＋「目前還沒有收藏的書籍」，不顯示切換按鈕 |
+| RWD | 1280：3 張數字卡一列、甜甜圈 200px 在左、每個月都有標籤；768：同桌機；375：切換按鈕在副標下方、數字卡 1 欄、甜甜圈 160px 在上、只標單數月份；320：沒有水平捲軸 |
+
+> 實測方式：
+> - 和步驟 15 一樣，在 **8081** 啟動新後端、**5174** 開前端，沒有動到你的 5173。
+> - 「BDD 範例資料」和「沒有收藏」兩種情境**沒有改資料庫**：在瀏覽器裡暫時把 `/api/favorites` 的回應換成測試資料，重新整理就恢復。所以你的收藏完全沒被動到。
+
+**驗證 4（可選）：讓折線圖有好幾個月的資料**
+
+剛加入的收藏都是本月，折線圖只有最右邊一個點。想看到起伏，可以在 MySQL Workbench 把幾筆收藏的時間「往前改」（**只改時間，不影響其他功能**）：
+```sql
+UPDATE favorites
+SET created_at = '2026-08-05 10:00:00'
+WHERE isbn = '9789863980315'
+  AND user_id = (SELECT id FROM users WHERE mobile = '0900123456');
+```
+- 把 `isbn` 換成你收藏的書、日期換成想要的月份，一筆一筆改。
+- 改完回到收藏頁重新整理，就會看到 8 月出現一個點；「本月新增」也會少 1。
+- Workbench 預設開啟「安全更新模式」，`WHERE` 沒有用到主鍵時可能會擋下來。遇到 `Error Code: 1175` 時，先執行 `SET SQL_SAFE_UPDATES = 0;` 再執行上面的 UPDATE。
+
+**常見問題**
+| 症狀 | 原因與處理 |
+|---|---|
+| 點「統計」後畫面空白，Console 出現 `Cannot read properties of undefined (reading 'slice')` | 後端還是舊程式，收藏清單沒有 `createdAt`。在 Eclipse 停止後重新 Run `LibraryApplication` |
+| 折線圖只有最右邊一個點 | 正常：收藏都是這個月加入的。想看起伏請照「驗證 4」改時間 |
+| 圖例比例加起來是 99% 或 101% | 正常：每一項分別四捨五入到整數 |
+| 甜甜圈某個種類的顏色和預期不同 | 顏色依種類清單順序固定（DESIGN 第 2 節）；要換色改 `base.css` 的 `--chart-*` |
+
+### 16-7 在本機合併進 main
+和步驟 15-7 相同，把分支名稱換成 `feature/favorite-dashboard`：
+```bash
+git switch main
+```
+```bash
+git pull --ff-only
+```
+```bash
+git merge --no-ff feature/favorite-dashboard
+```
+```bash
+git push origin main
+```
+```bash
+git branch -d feature/favorite-dashboard
+```
+```bash
+git push origin --delete feature/favorite-dashboard
+```
 
 ---
 
