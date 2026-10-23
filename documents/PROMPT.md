@@ -1,8 +1,8 @@
 ---
 name: library-project-prompt
-version: v1.4.0
+version: v1.5.0
 date: 2026-10-21
-requires: BDD.md v1.3.0, DESIGN.md v1.2.0
+requires: BDD.md v1.4.0, DESIGN.md v1.3.0
 ---
 
 # LIBRARY / 侘寂書閣：Claude Code 專案提示詞
@@ -12,8 +12,8 @@ requires: BDD.md v1.3.0, DESIGN.md v1.2.0
 版本紀錄在本文件最下方，不需要貼進去。
 
 ```text
-【提示詞版本】v1.4.0（2026-10-21）
-【對應文件版本】BDD.md v1.3.0、DESIGN.md v1.2.0。若專案內文件的版本與此不同，請先告訴我再開始。
+【提示詞版本】v1.5.0（2026-10-21）
+【對應文件版本】BDD.md v1.4.0、DESIGN.md v1.3.0。若專案內文件的版本與此不同，請先告訴我再開始。
 
 請幫我從零建立「圖書收藏與會員系統」，網站名稱 LIBRARY（侘寂書閣）。
 
@@ -135,11 +135,17 @@ backend/src/main/resources/application-local.properties（不進 git），由我
 14. 書籍封面：查詢結果與收藏清單顯示封面，由前端用 ISBN 組出 Open Library 封面網址
     （https://covers.openlibrary.org/b/isbn/{ISBN}-M.jpg?default=false），後端不用儲存。
     沒有封面或載入失敗時顯示同尺寸的空白框，不顯示錯誤；規格見 DESIGN.md 4.10。
+15. 收藏書籍種類：種類記在「收藏」上（favorites.category，可為空值，空值視為「未分類」），
+    只能從固定清單選擇：未分類、小說、散文、詩、人文歷史、心理勵志、商業理財、科學、電腦資訊、藝術設計、其他。
+    清單只在後端定義一份，前端透過 GET /api/categories 取得；在收藏卡片上用下拉選單修改，選完立即存檔。
+    收藏頁用種類按鈕篩選，只顯示「全部」＋有書的種類（規格見 DESIGN.md 4.11、4.12）。
+16. 搜尋收藏：純前端篩選已載入的收藏，範圍為書名、作者、ISBN；不分大小寫、去除前後空白、邊輸入邊篩選；
+    與種類篩選同時成立。「共 N 本」顯示總數，篩選中另外顯示「顯示 X 本」；沒有符合的顯示「沒有符合條件的收藏」。
 
 【資料表】
 - users：id、nickname、nickname_lower（唯一）、mobile（唯一）、created_at
 - books：isbn（主鍵，13 碼）、title、author、publish_date（字串）
-- favorites：id、user_id（外鍵）、isbn（外鍵）、created_at，(user_id, isbn) 設唯一鍵
+- favorites：id、user_id（外鍵）、isbn（外鍵）、category（VARCHAR(20)，可為空值）、created_at，(user_id, isbn) 設唯一鍵
 - 種子資料：BDD.md 的 2 本書，以及會員 Cooqle / 0900123456
 
 【API】（REST 一律加 /api 前綴，避免與前端頁面網址衝突）
@@ -150,6 +156,10 @@ backend/src/main/resources/application-local.properties（不進 git），由我
 - POST /api/favorites/add：需登入，user_id 取自登入者；201 成功；409 重複收藏；404 無此書
 - GET /api/favorites：需登入，只回傳自己的收藏（含書籍資料）
 - DELETE /api/favorites/{id}：需登入，須驗證屬於本人；不存在或不是本人的收藏一律回 404
+- GET /api/categories：公開。回傳種類清單（依固定順序）
+- PUT /api/favorites/{id}/category：需登入，內容 {"category": "小說"}；200 已更新書籍種類；400 書籍種類不正確；
+  404 不存在或不是本人的收藏
+- GET /api/favorites 的每筆資料加上 category（空值時回「未分類」）
 
 【前端頁面】
 共 4 個路由、7 張線稿，詳見 DESIGN.md 第 5 節：
@@ -179,6 +189,12 @@ backend/src/main/resources/application-local.properties（不進 git），由我
 - MAJOR：技術棧或整體架構改變（例如換前端框架、換資料庫）
 - MINOR：新增或調整功能規則、設計決策
 - PATCH：只修正文字、錯字、說明
+
+### v1.5.0（2026-10-21）收藏書籍種類與搜尋
+- 新增：設計決策 15 收藏書籍種類（11 種、預設未分類、清單由後端提供、卡片下拉選單修改、種類按鈕篩選）。
+- 新增：設計決策 16 搜尋收藏（純前端；書名、作者、ISBN；不分大小寫；與種類同時成立）。
+- 新增：favorites.category 欄位；API GET /api/categories、PUT /api/favorites/{id}/category；GET /api/favorites 回傳 category。
+- 對應文件：BDD.md v1.4.0、DESIGN.md v1.3.0。
 
 ### v1.4.0（2026-10-21）同步開發後的實際狀態（Google 金鑰、Open Library、封面、git 流程）
 - 修改：設計決策 1 書籍來源改為「本機 → Google Books → Open Library」，並定義 404／503 的判斷規則（BDD v1.2.0）。
