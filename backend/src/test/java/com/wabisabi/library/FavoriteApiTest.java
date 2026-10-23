@@ -3,6 +3,8 @@ package com.wabisabi.library;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -11,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.LocalDate;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -399,5 +402,20 @@ class FavoriteApiTest {
 		updateCategory(cooqle, 999999L, "散文")
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.message").value("找不到此收藏"));
+	}
+
+	// ===== 需求 11：收藏統計 Dashboard（BDD v1.5.0） =====
+
+	@Test
+	@DisplayName("Scenario: 收藏清單回傳收藏日期 (createdAt，ISO 格式，前 10 碼是今天)")
+	void listIncludesCreatedAt() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(status().isOk())
+				// 例如 2026-10-24T10:15:30.123456：前端取前 7 個字（2026-10）當月份
+				.andExpect(jsonPath("$[0].createdAt").value(matchesPattern("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*")))
+				.andExpect(jsonPath("$[0].createdAt").value(startsWith(LocalDate.now().toString())));
 	}
 }
