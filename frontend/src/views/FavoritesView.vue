@@ -2,11 +2,12 @@
   收藏頁 /favorites（DESIGN.md 5.3）：需要登入（路由守衛把關）。
   (a) 已登入：收藏清單，每本書旁邊有「刪除」；沒有收藏時顯示空狀態框。
       v1.4.0：搜尋框、種類按鈕列、卡片內的種類下拉選單（BDD 需求 9、10）。
+  (c) v1.5.0 統計檢視 /favorites?view=stats：總覽數字、種類比例圓餅圖、每月收藏趨勢折線圖（BDD 需求 11）。
   (b) 未登入提示畫面：只在「停留在本頁時 Session 失效（API 回 401）」時顯示（備用）。
 -->
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import PageTitle from '@/components/PageTitle.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import BaseInput from '@/components/BaseInput.vue'
@@ -14,13 +15,19 @@ import BaseSelect from '@/components/BaseSelect.vue'
 import BookCover from '@/components/BookCover.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import CategoryChips from '@/components/CategoryChips.vue'
+import ViewToggle from '@/components/ViewToggle.vue'
+import StatTiles from '@/components/StatTiles.vue'
+import CategoryPieChart from '@/components/CategoryPieChart.vue'
+import MonthlyLineChart from '@/components/MonthlyLineChart.vue'
 import ErrorBox from '@/components/ErrorBox.vue'
 import EmptyBox from '@/components/EmptyBox.vue'
 import { api } from '@/api'
 import { auth, setLoggedOut } from '@/auth'
 import { showToast } from '@/toast'
 import { MESSAGES } from '@/messages'
+import { summary, categoryBreakdown, monthlyCounts } from '@/favoriteStats'
 
+const route = useRoute() // 目前的網址資訊（例如 ?view=stats）
 const router = useRouter()
 
 const favorites = ref([]) // 收藏清單
@@ -34,6 +41,19 @@ const savingCategoryId = ref(null) // 正在儲存哪一筆的種類（下拉選
 // ===== 篩選條件（BDD v1.4.0 需求 9、10） =====
 const keyword = ref('') // 搜尋框的內容
 const selectedCategory = ref('') // 選中的種類；'' 代表「全部」
+
+// ===== 清單／統計切換（BDD v1.5.0 需求 11、DESIGN.md 4.13） =====
+// 狀態記在網址：/favorites 是清單、/favorites?view=stats 是統計，所以重新整理後還會停在原本的檢視。
+// computed 的 get / set：讀取時看網址，ViewToggle 改值時就換網址。
+const view = computed({
+  get: () => (route.query.view === 'stats' ? 'stats' : 'list'),
+  set: (value) => router.push({ query: value === 'stats' ? { view: 'stats' } : {} }),
+})
+
+// 統計用的數字：一律以「全部收藏」計算（不受搜尋與種類篩選影響）
+const stats = computed(() => summary(favorites.value, categories.value))
+const breakdown = computed(() => categoryBreakdown(favorites.value, categories.value))
+const months = computed(() => monthlyCounts(favorites.value))
 
 // onMounted：頁面顯示出來之後執行一次；收藏與種類清單同時載入
 onMounted(() => {
@@ -175,9 +195,28 @@ function handleSessionExpired() {
 
     <!-- (a) 已登入：清單（載入中先不顯示，避免閃一下「目前還沒有收藏」） -->
     <template v-else-if="!loading">
-      <h2 class="summary">會員「{{ auth.user?.nickname }}」的私人藏書 (共 {{ favorites.length }} 本)</h2>
+      <!-- 副標＋清單／統計切換（有收藏才顯示切換；手機版切換在副標下方） -->
+      <div class="header">
+        <h2 class="summary">會員「{{ auth.user?.nickname }}」的私人藏書 (共 {{ favorites.length }} 本)</h2>
+        <ViewToggle v-if="favorites.length > 0" v-model="view" />
+      </div>
 
       <EmptyBox v-if="favorites.length === 0">目前還沒有收藏的書籍</EmptyBox>
+
+      <!-- (c) 統計檢視（DESIGN.md 5.3-c）：總覽數字 → 種類比例 → 每月收藏趨勢 -->
+      <div v-else-if="view === 'stats'" class="stats">
+        <StatTiles :total="stats.total" :added-this-month="stats.addedThisMonth" :top-category="stats.topCategory" />
+
+        <BaseCard class="stats__card">
+          <h3 class="stats__title">種類比例</h3>
+          <CategoryPieChart :total="favorites.length" :items="breakdown" />
+        </BaseCard>
+
+        <BaseCard class="stats__card">
+          <h3 class="stats__title">每月收藏趨勢（最近 12 個月）</h3>
+          <MonthlyLineChart :months="months" />
+        </BaseCard>
+      </div>
 
       <template v-else>
         <!-- 搜尋框＋種類按鈕列（DESIGN.md 5.3-a） -->
@@ -233,10 +272,32 @@ function handleSessionExpired() {
 </template>
 
 <style scoped>
+/* 副標在左、清單／統計切換在右 */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
 /* 左對齊粗體副標：會員「Cooqle」的私人藏書 (共 2 本) */
 .summary {
-  margin: 0 0 24px;
+  margin: 0;
   padding-left: 16px;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+/* ===== 統計檢視 ===== */
+.stats {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.stats__title {
+  margin: 0 0 24px;
   font-size: 1.1em;
   font-weight: 700;
 }
@@ -356,8 +417,17 @@ function handleSessionExpired() {
 
 /* 手機：書名與資訊在上，「刪除」在下並滿寬；搜尋框滿寬 */
 @media (max-width: 767px) {
+  .header {
+    flex-direction: column; /* 切換按鈕移到副標下方、靠左 */
+    align-items: flex-start;
+  }
+
   .summary {
     padding-left: 0;
+  }
+
+  .stats {
+    gap: 16px;
   }
 
   .filters {
