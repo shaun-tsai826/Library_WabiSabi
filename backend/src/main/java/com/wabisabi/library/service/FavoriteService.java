@@ -7,6 +7,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import com.wabisabi.library.common.Categories;
 import com.wabisabi.library.common.Messages;
 import com.wabisabi.library.dto.FavoriteResponse;
 import com.wabisabi.library.entity.Book;
@@ -78,5 +79,22 @@ public class FavoriteService {
 		Favorite favorite = favoriteRepository.findByIdAndUserId(favoriteId, userId)
 				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, Messages.FAVORITE_NOT_FOUND));
 		favoriteRepository.delete(favorite);
+	}
+
+	/**
+	 * 修改收藏的種類（BDD v1.4.0 需求 9）。順序：種類是否在清單中 → 收藏是不是自己的 → 存檔。
+	 * 收藏不存在、或不是自己的，一律回 404（和刪除的規則相同）。
+	 */
+	public void updateCategory(Long userId, Long favoriteId, String rawCategory) {
+		String category = (rawCategory == null) ? "" : rawCategory.trim();
+		if (!Categories.isValid(category)) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, Messages.CATEGORY_INVALID);
+		}
+
+		Favorite favorite = favoriteRepository.findByIdAndUserId(favoriteId, userId)
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, Messages.FAVORITE_NOT_FOUND));
+
+		favorite.setCategory(category);
+		favoriteRepository.save(favorite);
 	}
 }

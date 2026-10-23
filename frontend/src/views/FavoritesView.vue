@@ -1,15 +1,19 @@
 <!--
   收藏頁 /favorites（DESIGN.md 5.3）：需要登入（路由守衛把關）。
   (a) 已登入：收藏清單，每本書旁邊有「刪除」；沒有收藏時顯示空狀態框。
+      v1.4.0：搜尋框、種類按鈕列、卡片內的種類下拉選單（BDD 需求 9、10）。
   (b) 未登入提示畫面：只在「停留在本頁時 Session 失效（API 回 401）」時顯示（備用）。
 -->
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import PageTitle from '@/components/PageTitle.vue'
 import BaseCard from '@/components/BaseCard.vue'
+import BaseInput from '@/components/BaseInput.vue'
+import BaseSelect from '@/components/BaseSelect.vue'
 import BookCover from '@/components/BookCover.vue'
 import BaseButton from '@/components/BaseButton.vue'
+import CategoryChips from '@/components/CategoryChips.vue'
 import ErrorBox from '@/components/ErrorBox.vue'
 import EmptyBox from '@/components/EmptyBox.vue'
 import { api } from '@/api'
@@ -20,13 +24,22 @@ import { MESSAGES } from '@/messages'
 const router = useRouter()
 
 const favorites = ref([]) // 收藏清單
+const categories = ref([]) // 種類清單（從後端 GET /api/categories 取得）
 const loading = ref(true) // 第一次載入中
 const sessionExpired = ref(false) // Session 失效 → 顯示未登入提示畫面
 const errorMessage = ref('') // 其他錯誤（例如連不上後端）
 const deletingId = ref(null) // 正在刪除哪一筆（按鈕暫時停用）
+const savingCategoryId = ref(null) // 正在儲存哪一筆的種類（下拉選單暫時停用）
 
-// onMounted：頁面顯示出來之後執行一次
-onMounted(loadFavorites)
+// ===== 篩選條件（BDD v1.4.0 需求 9、10） =====
+const keyword = ref('') // 搜尋框的內容
+const selectedCategory = ref('') // 選中的種類；'' 代表「全部」
+
+// onMounted：頁面顯示出來之後執行一次；收藏與種類清單同時載入
+onMounted(() => {
+  loadFavorites()
+  loadCategories()
+})
 
 async function loadFavorites() {
   loading.value = true
@@ -39,6 +52,75 @@ async function loadFavorites() {
     handleSessionExpired()
   } else {
     errorMessage.value = result.data.message
+  }
+}
+
+async function loadCategories() {
+  const result = await api.get('/api/categories')
+  if (result.ok) {
+    categories.value = result.data
+  }
+  // 失敗時清單維持空的：下拉選單仍會顯示每本書目前的種類，只是暫時不能改成別的
+}
+
+// ===== computed：由其他資料「算出來」的值，來源一變就自動重算 =====
+
+/** 種類按鈕：只列出有書的種類，依後端種類清單的順序排列 */
+const chips = computed(() => {
+  const counts = {}
+  for (const item of favorites.value) {
+    counts[item.category] = (counts[item.category] || 0) + 1
+  }
+  // 依種類清單排序；萬一有清單以外的種類（理論上不會），排在最後
+  const ordered = [...categories.value, ...Object.keys(counts).filter((c) => !categories.value.includes(c))]
+  return ordered.filter((name) => counts[name] > 0).map((name) => ({ name, count: counts[name] }))
+})
+
+/** 套用種類與搜尋後，要顯示的收藏 */
+const visibleFavorites = computed(() => {
+  const word = keyword.value.trim().toLowerCase()
+  return favorites.value.filter((item) => {
+    // 條件 1：種類（「全部」就不過濾）
+    if (selectedCategory.value !== '' && item.category !== selectedCategory.value) {
+      return false
+    }
+    // 條件 2：關鍵字（書名、作者、ISBN 任一包含就算符合，不分大小寫）
+    if (word === '') {
+      return true
+    }
+    const text = `${item.title} ${item.author || ''} ${item.isbn}`.toLowerCase()
+    return text.includes(word)
+  })
+})
+
+/** 是否正在篩選（有選種類或有輸入關鍵字）：決定要不要顯示「顯示 X 本」 */
+const isFiltering = computed(() => selectedCategory.value !== '' || keyword.value.trim() !== '')
+
+// 選中的種類變成 0 本時（改了種類或刪除之後），自動切回「全部」（DESIGN.md 4.11）
+watch(chips, (list) => {
+  if (selectedCategory.value !== '' && !list.some((chip) => chip.name === selectedCategory.value)) {
+    selectedCategory.value = ''
+  }
+})
+
+/** 在下拉選單選了新的種類：立刻存檔 */
+async function changeCategory(item, newCategory) {
+  if (newCategory === item.category) {
+    return
+  }
+
+  savingCategoryId.value = item.id
+  const result = await api.put(`/api/favorites/${item.id}/category`, { category: newCategory })
+  savingCategoryId.value = null
+
+  if (result.ok) {
+    item.category = newCategory // 存檔成功才更新畫面；種類按鈕的本數會自動重算
+    showToast(result.data.message) // 已更新書籍種類
+  } else if (result.status === 401) {
+    handleSessionExpired()
+  } else {
+    // 失敗時 item.category 沒變，下拉選單會自動回到原本的種類
+    showToast(result.data.message, 'error')
   }
 }
 
@@ -55,7 +137,7 @@ async function removeFavorite(item) {
 
   if (result.ok) {
     showToast(result.data.message) // 已移除收藏
-    // 從畫面上的清單拿掉這一筆（「共 N 本」會自動跟著更新）
+    // 從畫面上的清單拿掉這一筆（「共 N 本」與種類按鈕的本數會自動跟著更新）
     favorites.value = favorites.value.filter((f) => f.id !== item.id)
   } else if (result.status === 401) {
     handleSessionExpired()
@@ -97,29 +179,55 @@ function handleSessionExpired() {
 
       <EmptyBox v-if="favorites.length === 0">目前還沒有收藏的書籍</EmptyBox>
 
-      <ul v-else class="list">
-        <!-- v-for：清單有幾筆就畫幾張卡片；:key 讓 Vue 分辨每一筆 -->
-        <li v-for="item in favorites" :key="item.id">
-          <BaseCard class="item">
-            <!-- 左邊：封面縮圖＋書名與資訊（手機版這兩個仍在同一列） -->
-            <div class="item__main">
-              <BookCover :isbn="item.isbn" :title="item.title" size="sm" lazy />
-              <div class="item__info">
-                <h3 class="item__title">{{ item.title }}</h3>
-                <p class="item__meta">作者：{{ item.author || '—' }} | ISBN: {{ item.isbn }}</p>
+      <template v-else>
+        <!-- 搜尋框＋種類按鈕列（DESIGN.md 5.3-a） -->
+        <div class="filters">
+          <BaseInput
+            v-model="keyword"
+            class="filters__search"
+            label="搜尋收藏"
+            placeholder="輸入書名、作者或 ISBN..."
+            type="search"
+          />
+          <CategoryChips v-model="selectedCategory" :total="favorites.length" :chips="chips" />
+          <p v-if="isFiltering" class="filters__count">顯示 {{ visibleFavorites.length }} 本</p>
+        </div>
+
+        <EmptyBox v-if="visibleFavorites.length === 0">{{ MESSAGES.FAVORITES_NO_MATCH }}</EmptyBox>
+
+        <ul v-else class="list">
+          <!-- v-for：清單有幾筆就畫幾張卡片；:key 讓 Vue 分辨每一筆 -->
+          <li v-for="item in visibleFavorites" :key="item.id">
+            <BaseCard class="item">
+              <!-- 左邊：封面縮圖＋書名與資訊（手機版這兩個仍在同一列） -->
+              <div class="item__main">
+                <BookCover :isbn="item.isbn" :title="item.title" size="sm" lazy />
+                <div class="item__info">
+                  <h3 class="item__title">{{ item.title }}</h3>
+                  <p class="item__meta">作者：{{ item.author || '—' }} | ISBN: {{ item.isbn }}</p>
+                  <!-- 種類下拉選單：選完立即存檔（DESIGN.md 4.12） -->
+                  <BaseSelect
+                    class="item__category"
+                    label="種類："
+                    :model-value="item.category"
+                    :options="categories"
+                    :disabled="savingCategoryId === item.id"
+                    @update:model-value="(value) => changeCategory(item, value)"
+                  />
+                </div>
               </div>
-            </div>
-            <BaseButton
-              variant="danger"
-              class="item__delete"
-              :disabled="deletingId === item.id"
-              @click="removeFavorite(item)"
-            >
-              刪除
-            </BaseButton>
-          </BaseCard>
-        </li>
-      </ul>
+              <BaseButton
+                variant="danger"
+                class="item__delete"
+                :disabled="deletingId === item.id"
+                @click="removeFavorite(item)"
+              >
+                刪除
+              </BaseButton>
+            </BaseCard>
+          </li>
+        </ul>
+      </template>
     </template>
   </div>
 </template>
@@ -131,6 +239,24 @@ function handleSessionExpired() {
   padding-left: 16px;
   font-size: 1.1em;
   font-weight: 700;
+}
+
+/* ===== 搜尋框＋種類按鈕列 ===== */
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 32px;
+}
+
+.filters__search {
+  width: 50%; /* 桌機約 50%（DESIGN.md 3.1） */
+}
+
+.filters__count {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.95em;
 }
 
 /* ===== 收藏清單 ===== */
@@ -176,6 +302,11 @@ function handleSessionExpired() {
   color: var(--color-text-muted);
 }
 
+/* 種類下拉選單：在作者行下方 */
+.item__category {
+  margin-top: 12px;
+}
+
 .item__delete {
   flex-shrink: 0;
   width: 220px;
@@ -207,8 +338,12 @@ function handleSessionExpired() {
   max-width: 100%;
 }
 
-/* 平板：按鈕窄一點 */
+/* 平板：按鈕窄一點；搜尋框約 70% */
 @media (max-width: 1023px) {
+  .filters__search {
+    width: 70%;
+  }
+
   .item {
     padding-top: 32px;
     padding-bottom: 32px;
@@ -219,10 +354,19 @@ function handleSessionExpired() {
   }
 }
 
-/* 手機：書名與資訊在上，「刪除」在下並滿寬 */
+/* 手機：書名與資訊在上，「刪除」在下並滿寬；搜尋框滿寬 */
 @media (max-width: 767px) {
   .summary {
     padding-left: 0;
+  }
+
+  .filters {
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .filters__search {
+    width: 100%;
   }
 
   .item {
@@ -235,6 +379,10 @@ function handleSessionExpired() {
 
   .item__main {
     gap: 16px;
+  }
+
+  .item__info {
+    flex: 1; /* 讓手機版的下拉選單可以撐滿資訊欄 */
   }
 
   .item__delete {

@@ -36,6 +36,10 @@ public final class Messages {
 	/** 刪除時找不到收藏，或收藏不是自己的（BDD 未定義，計畫階段補充） */
 	public static final String FAVORITE_NOT_FOUND = "找不到此收藏";
 
+	// ===== 收藏書籍種類（BDD v1.4.0 需求 9） =====
+	public static final String CATEGORY_UPDATED = "已更新書籍種類";
+	public static final String CATEGORY_INVALID = "書籍種類不正確";
+
 	// ===== 通用（BDD 未定義，計畫階段補充） =====
 	/** 程式沒預料到的錯誤（500） */
 	public static final String SERVER_ERROR = "系統發生錯誤，請稍後再試";

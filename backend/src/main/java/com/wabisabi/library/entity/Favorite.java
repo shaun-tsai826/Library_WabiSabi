@@ -35,6 +35,13 @@ public class Favorite {
 	@JoinColumn(name = "isbn", nullable = false)
 	private Book book;
 
+	/**
+	 * 書籍種類（BDD v1.4.0 需求 9），例如「小說」。
+	 * 可以是空值：這個欄位是後來才加的，舊的收藏沒有值，畫面上一律顯示成「未分類」。
+	 */
+	@Column(name = "category", length = 20)
+	private String category;
+
 	@Column(name = "created_at", nullable = false)
 	private LocalDateTime createdAt;
 
@@ -70,6 +77,14 @@ public class Favorite {
 
 	public void setBook(Book book) {
 		this.book = book;
+	}
+
+	public String getCategory() {
+		return category;
+	}
+
+	public void setCategory(String category) {
+		this.category = category;
 	}
 
 	public LocalDateTime getCreatedAt() {
