@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -79,6 +80,21 @@ class FavoriteApiTest {
 		String json = jsonMapper.writeValueAsString(Map.of("isbn", isbn));
 		return mockMvc.perform(post("/api/favorites/add")
 				.session(session).contentType(MediaType.APPLICATION_JSON).content(json));
+	}
+
+	/** 修改收藏種類（BDD v1.4.0 需求 9） */
+	private ResultActions updateCategory(MockHttpSession session, Long favoriteId, String category) throws Exception {
+		String json = jsonMapper.writeValueAsString(Map.of("category", category));
+		return mockMvc.perform(put("/api/favorites/{id}/category", favoriteId)
+				.session(session).contentType(MediaType.APPLICATION_JSON).content(json));
+	}
+
+	/** 找出某位會員收藏某本書的那一筆 */
+	private Favorite favoriteOf(String mobile, String isbn) {
+		Long userId = userRepository.findByMobile(mobile).orElseThrow().getId();
+		return favoriteRepository.findByUserIdOrderByIdAsc(userId).stream()
+				.filter(f -> f.getBook().getIsbn().equals(isbn))
+				.findFirst().orElseThrow();
 	}
 
 	private long favoriteCountOf(String mobile) {
@@ -187,7 +203,7 @@ class FavoriteApiTest {
 	// ===== 需求 8：未登入的權限控管 =====
 
 	@Test
-	@DisplayName("Scenario: 未登入直接呼叫收藏相關 API 被拒絕 (查詢、新增、刪除都回 401)")
+	@DisplayName("Scenario: 未登入直接呼叫收藏相關 API 被拒絕 (查詢、新增、刪除、修改種類都回 401)")
 	void favoritesRequireLogin() throws Exception {
 		// 先讓 Cooqle 有一筆收藏，確認未登入的回應裡不會洩漏它
 		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
@@ -208,7 +224,14 @@ class FavoriteApiTest {
 				.andExpect(status().isUnauthorized())
 				.andExpect(jsonPath("$.message").value("請先註冊/登入"));
 
+		// v1.4.0：修改種類也要登入
+		mockMvc.perform(put("/api/favorites/{id}/category", favoriteId)
+				.contentType(MediaType.APPLICATION_JSON).content("{\"category\":\"散文\"}"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.message").value("請先註冊/登入"));
+
 		assertThat(favoriteRepository.count()).isEqualTo(1); // 什麼都沒被改到
+		assertThat(favoriteRepository.findAll().get(0).getCategory()).isNull(); // 種類也沒被改
 	}
 
 	@Test
@@ -277,6 +300,103 @@ class FavoriteApiTest {
 		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
 
 		mockMvc.perform(delete("/api/favorites/{id}", 999999).session(cooqle))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.message").value("找不到此收藏"));
+	}
+
+	// ===== 需求 9：收藏書籍種類（BDD v1.4.0） =====
+
+	@Test
+	@DisplayName("Scenario: 新加入的收藏預設為「未分類」")
+	void newFavoriteIsUncategorized() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].category").value("未分類"));
+	}
+
+	@Test
+	@DisplayName("Scenario: 會員為收藏的書籍設定種類（重新查詢後仍保留）")
+	void updateCategorySuccess() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+		Long favoriteId = favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getId();
+
+		updateCategory(cooqle, favoriteId, "散文")
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.message").value("已更新書籍種類"));
+
+		// 「重新整理頁面」＝再查一次清單：種類應該已經存進資料庫
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(jsonPath("$[0].category").value("散文"));
+		assertThat(favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getCategory()).isEqualTo("散文");
+	}
+
+	@Test
+	@DisplayName("Scenario: 依種類檢視收藏（清單回傳每本書的種類，供前端篩選與計算本數）")
+	void listReturnsEachCategory() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+		addFavorite(cooqle, QUESTION_ISBN).andExpect(status().isCreated());
+		updateCategory(cooqle, favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getId(), "散文").andExpect(status().isOk());
+		updateCategory(cooqle, favoriteOf(SEED_MOBILE, QUESTION_ISBN).getId(), "心理勵志").andExpect(status().isOk());
+
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(jsonPath("$.length()").value(2))
+				.andExpect(jsonPath("$[0].isbn").value(WABI_SABI_ISBN))
+				.andExpect(jsonPath("$[0].category").value("散文"))
+				.andExpect(jsonPath("$[1].isbn").value(QUESTION_ISBN))
+				.andExpect(jsonPath("$[1].category").value("心理勵志"));
+	}
+
+	@Test
+	@DisplayName("Scenario: 種類只能從清單中選擇（武俠 → 400 書籍種類不正確）")
+	void updateCategoryRejectsUnknown() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+		Long favoriteId = favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getId();
+
+		updateCategory(cooqle, favoriteId, "武俠")
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.message").value("書籍種類不正確"));
+
+		assertThat(favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getCategory()).isNull(); // 維持不變
+	}
+
+	@Test
+	@DisplayName("規則：種類空白 → 400 書籍種類不正確")
+	void updateCategoryRejectsBlank() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+
+		updateCategory(cooqle, favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getId(), "   ")
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.message").value("書籍種類不正確"));
+	}
+
+	@Test
+	@DisplayName("Scenario: 會員無法修改其他會員收藏的種類（回 404）")
+	void cannotUpdateOthersCategory() throws Exception {
+		MockHttpSession readerB = login("Reader_B", "0911222333");
+		addFavorite(readerB, QUESTION_ISBN).andExpect(status().isCreated());
+		Long readerBFavoriteId = favoriteOf("0911222333", QUESTION_ISBN).getId();
+
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		updateCategory(cooqle, readerBFavoriteId, "散文")
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.message").value("找不到此收藏"));
+
+		assertThat(favoriteOf("0911222333", QUESTION_ISBN).getCategory()).isNull(); // Reader_B 的維持不變
+	}
+
+	@Test
+	@DisplayName("規則：修改不存在的收藏種類 → 404")
+	void updateCategoryOfNonExisting() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+
+		updateCategory(cooqle, 999999L, "散文")
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.message").value("找不到此收藏"));
 	}
