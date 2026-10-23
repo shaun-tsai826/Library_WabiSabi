@@ -1,6 +1,6 @@
 # STEPS.md：LIBRARY / 侘寂書閣 開發步驟紀錄
 
-> 對應文件：BDD.md v1.3.0、DESIGN.md v1.2.0（步驟 14 起；步驟 13 對應 BDD v1.2.0；步驟 0～12 對應 BDD v1.1.0、DESIGN v1.1.0）、PROMPT.md v1.3.0
+> 對應文件：BDD.md v1.4.0、DESIGN.md v1.3.0、PROMPT.md v1.5.0（步驟 15 起；步驟 14 對應 BDD v1.3.0、DESIGN v1.2.0；步驟 13 對應 BDD v1.2.0；步驟 0～12 對應 BDD v1.1.0、DESIGN v1.1.0）
 > 這份文件記錄每一步「做了什麼、為什麼這樣做、怎麼確認成功」。照著從頭做一遍，就能自己重建整個專案。
 
 ---
@@ -24,6 +24,7 @@
 - [步驟 12：Google Books API 金鑰](#步驟-12google-books-api-金鑰)
 - [步驟 13：Open Library 備援資料來源（BDD v1.2.0）](#步驟-13open-library-備援資料來源bdd-v120)
 - [步驟 14：書籍封面（BDD v1.3.0、DESIGN v1.2.0）](#步驟-14書籍封面bdd-v130design-v120)
+- [步驟 15：收藏書籍種類與搜尋（BDD v1.4.0、DESIGN v1.3.0）](#步驟-15收藏書籍種類與搜尋bdd-v140design-v130)
 - [如何快速上手](#如何快速上手)
 
 ---
@@ -8458,6 +8459,1751 @@ npm run build
 | 封面一直是空白框 | 這本書在 Open Library 沒有封面（中文書很常見），屬於正常行為。可以直接在瀏覽器打開 `https://covers.openlibrary.org/b/isbn/{ISBN}-M.jpg?default=false` 確認：顯示 404 就是真的沒有 |
 | 封面要等一兩秒才出現 | 圖片是從 Open Library 下載的，速度取決於對方伺服器；載入前先顯示空白框 |
 | 換書後封面沒更新 | 檢查 `BookCover.vue` 的 `watch` 是否還在 |
+
+---
+
+## 步驟 15：收藏書籍種類與搜尋（BDD v1.4.0、DESIGN v1.3.0）
+
+### 目標
+收藏頁新功能規劃的**第 2 階段**：
+1. **設定種類**：每張收藏卡片有一個「種類」下拉選單，選完立刻存檔。新加入的收藏預設「未分類」。
+2. **依種類檢視**：清單上方一排種類按鈕，例如 `全部 (4)` `散文 (1)` `心理勵志 (2)`，點了只顯示那一類。
+3. **搜尋**：用書名、作者或 ISBN 的任一部分搜尋，邊打字邊篩選，可以和種類同時使用。
+
+| 順序 | 做什麼 | commit |
+|---|---|---|
+| 1 | 從 `main` 開分支 `feature/favorite-category-search` | — |
+| 2 | PROMPT.md v1.4.0（同步之前的變更） | `a109787` |
+| 3 | BDD.md v1.4.0、DESIGN.md v1.3.0、PROMPT.md v1.5.0 | `0d6598b` |
+| 4 | 後端：種類清單、資料欄位、2 支 API、8 個測試 | `551cb03` |
+| 5 | 前端：下拉選單、種類按鈕列、搜尋框 | `d5de88a` |
+| 6 | 實測（MySQL＋瀏覽器）、文件（本節與 MANUAL_TEST.md） | 本次 |
+| 7 | 在本機把分支合併進 `main`（保留合併 commit）、push、刪除分支 | 合併 commit |
+
+> 從這個階段開始**不再開 Pull Request**：文件寫完後，直接在本機用 `git merge --no-ff` 合併進 `main` 再 push（見本節最後）。
+
+### 名詞先解釋
+- **`computed`（計算屬性）**：由其他資料「算出來」的值。例如「目前要顯示哪些書」是由「全部收藏＋選中的種類＋搜尋關鍵字」算出來的；任何一個來源改變，Vue 都會自動重算，畫面跟著更新。比喻：Excel 的公式格，改了 A1，用到 A1 的格子就會自動變。
+- **`watch`（監看）**：「某個值改變時，順便做一件事」。這裡用來在「選中的種類變成 0 本」時，自動切回「全部」。
+- **PUT**：HTTP 方法之一，意思是「把這個東西更新成我給的內容」。修改種類用 `PUT /api/favorites/5/category`。
+- **`List.of(...)`**：Java 建立「不能被修改的清單」的寫法。種類清單是固定的，用它可以防止程式不小心把清單改掉。
+- **`--no-ff`（no fast-forward）**：合併分支時，一定產生一個「合併 commit」，歷史紀錄看得出「這幾個 commit 是一起從某個分支合併進來的」。和 GitHub 的「Create a merge commit」效果一樣。
+
+### 種類清單（只在後端定義一份）
+`未分類`、`小說`、`散文`、`詩`、`人文歷史`、`心理勵志`、`商業理財`、`科學`、`電腦資訊`、`藝術設計`、`其他`
+
+為什麼種類記在「收藏」上而不是「書」上？同一本書，Cooqle 可以歸「小說」，別的會員可以歸「文學」，每個人整理自己的書櫃。
+
+### 建立或修改的檔案
+```
+documents/BDD.md、DESIGN.md、PROMPT.md                                     修改
+backend/src/main/java/com/wabisabi/library/
+├── common/Categories.java                 新增：種類清單（全專案只有這一份）
+├── common/Messages.java                   修改：已更新書籍種類、書籍種類不正確
+├── entity/Favorite.java                   修改：category 欄位
+├── dto/FavoriteResponse.java              修改：回傳 category（空值 → 未分類）
+├── dto/UpdateCategoryRequest.java         新增：{"category": "..."}
+├── service/FavoriteService.java           修改：updateCategory
+├── controller/FavoriteController.java     修改：PUT /api/favorites/{id}/category
+└── controller/CategoryController.java     新增：GET /api/categories
+backend/src/test/java/com/wabisabi/library/
+├── FavoriteApiTest.java                   修改：新增 7 個種類測試、401 測試補上 PUT
+└── CategoryApiTest.java                   新增
+frontend/src/
+├── api.js                                 修改：新增 put
+├── messages.js                            修改：沒有符合條件的收藏
+├── components/BaseSelect.vue              新增：下拉選單
+├── components/CategoryChips.vue           新增：種類按鈕列
+└── views/FavoritesView.vue                修改：搜尋框、種類按鈕列、卡片下拉選單
+```
+
+### 15-1 種類清單：Categories.java
+
+**`backend/src/main/java/com/wabisabi/library/common/Categories.java`**
+
+```java
+package com.wabisabi.library.common;
+
+import java.util.List;
+
+/**
+ * 收藏書籍的種類清單（BDD v1.4.0 需求 9）。
+ * 整個專案只在這裡定義一份：前端透過 GET /api/categories 取得，後端修改種類時也用它檢查。
+ * 要增減種類，只改這個檔案。
+ */
+public final class Categories {
+
+	private Categories() {
+		// 只放常數，不需要建立物件
+	}
+
+	/** 預設種類：新加入的收藏、以及資料庫裡種類是空值的收藏，都顯示成它 */
+	public static final String DEFAULT = "未分類";
+
+	/** 全部種類，依畫面上顯示的順序排列（List.of 建立的清單不能被修改） */
+	public static final List<String> ALL = List.of(
+			DEFAULT, "小說", "散文", "詩", "人文歷史", "心理勵志",
+			"商業理財", "科學", "電腦資訊", "藝術設計", "其他");
+
+	/** 是不是清單裡的種類 */
+	public static boolean isValid(String category) {
+		return category != null && ALL.contains(category);
+	}
+
+	/** 資料庫的空值轉成「未分類」，其他照原樣 */
+	public static String orDefault(String category) {
+		return (category == null || category.isBlank()) ? DEFAULT : category;
+	}
+}
+```
+
+**白話解釋**
+- 和 `Messages.java` 一樣只放常數。種類清單**只寫在這裡**：前端透過 API 取得，後端驗證也用它。要增減種類只改這一個檔案。
+- `orDefault`：資料庫裡的空值（`null`）一律當作「未分類」。這個欄位是後來才加的，舊的收藏都是空值。
+
+### 15-2 收藏多一個欄位：Favorite.java、FavoriteResponse.java
+
+**`backend/src/main/java/com/wabisabi/library/entity/Favorite.java`**（修改後全文）
+
+```java
+package com.wabisabi.library.entity;
+
+import java.time.LocalDateTime;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+
+/**
+ * 收藏：對應資料表 favorites，記錄「哪位會員收藏了哪本書」。
+ * 同一位會員不能重複收藏同一本書：(user_id, isbn) 設為唯一鍵。
+ */
+@Entity
+@Table(name = "favorites",
+		uniqueConstraints = @UniqueConstraint(name = "uk_favorites_user_isbn", columnNames = { "user_id", "isbn" }))
+public class Favorite {
+
+	@Id
+	@GeneratedValue(strategy = GenerationType.IDENTITY)
+	private Long id;
+
+	/** 多筆收藏 → 屬於一位會員。資料表裡存的是 user_id 欄位（外鍵，指向 users.id） */
+	@ManyToOne(optional = false)
+	@JoinColumn(name = "user_id", nullable = false)
+	private User user;
+
+	/** 多筆收藏 → 指向一本書。資料表裡存的是 isbn 欄位（外鍵，指向 books.isbn） */
+	@ManyToOne(optional = false)
+	@JoinColumn(name = "isbn", nullable = false)
+	private Book book;
+
+	/**
+	 * 書籍種類（BDD v1.4.0 需求 9），例如「小說」。
+	 * 可以是空值：這個欄位是後來才加的，舊的收藏沒有值，畫面上一律顯示成「未分類」。
+	 */
+	@Column(name = "category", length = 20)
+	private String category;
+
+	@Column(name = "created_at", nullable = false)
+	private LocalDateTime createdAt;
+
+	public Favorite() {
+	}
+
+	/** 新增收藏時用：自動填好建立時間 */
+	public Favorite(User user, Book book) {
+		this.user = user;
+		this.book = book;
+		this.createdAt = LocalDateTime.now();
+	}
+
+	public Long getId() {
+		return id;
+	}
+
+	public void setId(Long id) {
+		this.id = id;
+	}
+
+	public User getUser() {
+		return user;
+	}
+
+	public void setUser(User user) {
+		this.user = user;
+	}
+
+	public Book getBook() {
+		return book;
+	}
+
+	public void setBook(Book book) {
+		this.book = book;
+	}
+
+	public String getCategory() {
+		return category;
+	}
+
+	public void setCategory(String category) {
+		this.category = category;
+	}
+
+	public LocalDateTime getCreatedAt() {
+		return createdAt;
+	}
+
+	public void setCreatedAt(LocalDateTime createdAt) {
+		this.createdAt = createdAt;
+	}
+}
+```
+
+**`backend/src/main/java/com/wabisabi/library/dto/FavoriteResponse.java`**（修改後全文）
+
+```java
+package com.wabisabi.library.dto;
+
+import com.wabisabi.library.common.Categories;
+import com.wabisabi.library.entity.Book;
+import com.wabisabi.library.entity.Favorite;
+
+/**
+ * 收藏清單中的一筆（含書籍資料）：
+ * {"id": 5, "isbn": "9789861343722", "title": "...", "author": "...", "publishDate": "2020-05-01", "category": "散文"}
+ * id 是「收藏」的編號，前端按「刪除」時用它呼叫 DELETE /api/favorites/{id}。
+ */
+public class FavoriteResponse {
+
+	private Long id;
+	private String isbn;
+	private String title;
+	private String author;
+	private String publishDate;
+	/** 書籍種類；資料庫是空值時回傳「未分類」 */
+	private String category;
+
+	public FavoriteResponse() {
+	}
+
+	public FavoriteResponse(Favorite favorite) {
+		Book book = favorite.getBook();
+		this.id = favorite.getId();
+		this.isbn = book.getIsbn();
+		this.title = book.getTitle();
+		this.author = book.getAuthor();
+		this.publishDate = book.getPublishDate();
+		this.category = Categories.orDefault(favorite.getCategory());
+	}
+
+	public Long getId() {
+		return id;
+	}
+
+	public void setId(Long id) {
+		this.id = id;
+	}
+
+	public String getIsbn() {
+		return isbn;
+	}
+
+	public void setIsbn(String isbn) {
+		this.isbn = isbn;
+	}
+
+	public String getTitle() {
+		return title;
+	}
+
+	public void setTitle(String title) {
+		this.title = title;
+	}
+
+	public String getAuthor() {
+		return author;
+	}
+
+	public void setAuthor(String author) {
+		this.author = author;
+	}
+
+	public String getPublishDate() {
+		return publishDate;
+	}
+
+	public void setPublishDate(String publishDate) {
+		this.publishDate = publishDate;
+	}
+
+	public String getCategory() {
+		return category;
+	}
+
+	public void setCategory(String category) {
+		this.category = category;
+	}
+}
+```
+
+**白話解釋**
+- `@Column(name = "category", length = 20)` **沒有寫 `nullable = false`**：MySQL 裡已經有收藏了，如果新欄位規定不能是空值，那些舊資料就不知道要填什麼。允許空值、讀出來時再轉成「未分類」最單純。
+- `ddl-auto=update` 啟動時會自動執行：
+  ```sql
+  alter table favorites add column category varchar(20)
+  ```
+  （2026-10-23 實測：連你的 MySQL 啟動時，紀錄裡出現了這一行。）
+
+### 15-3 API：CategoryController、UpdateCategoryRequest、FavoriteService、FavoriteController
+
+**`backend/src/main/java/com/wabisabi/library/controller/CategoryController.java`**
+
+```java
+package com.wabisabi.library.controller;
+
+import java.util.List;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.wabisabi.library.common.Categories;
+
+/**
+ * 書籍種類清單 API（公開，不需要登入）。
+ * 前端的下拉選單與種類按鈕都從這裡取得清單，種類只在後端定義一份。
+ */
+@RestController
+@RequestMapping("/api/categories")
+public class CategoryController {
+
+	/** GET /api/categories → ["未分類", "小說", "散文", ...] */
+	@GetMapping
+	public List<String> list() {
+		return Categories.ALL;
+	}
+}
+```
+
+**`backend/src/main/java/com/wabisabi/library/dto/UpdateCategoryRequest.java`**
+
+```java
+package com.wabisabi.library.dto;
+
+/**
+ * 修改收藏種類時前端送來的資料：{"category": "散文"}
+ */
+public class UpdateCategoryRequest {
+
+	private String category;
+
+	public UpdateCategoryRequest() {
+	}
+
+	public UpdateCategoryRequest(String category) {
+		this.category = category;
+	}
+
+	public String getCategory() {
+		return category;
+	}
+
+	public void setCategory(String category) {
+		this.category = category;
+	}
+}
+```
+
+**`backend/src/main/java/com/wabisabi/library/service/FavoriteService.java`**（修改後全文）
+
+```java
+package com.wabisabi.library.service;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+
+import com.wabisabi.library.common.Categories;
+import com.wabisabi.library.common.Messages;
+import com.wabisabi.library.dto.FavoriteResponse;
+import com.wabisabi.library.entity.Book;
+import com.wabisabi.library.entity.Favorite;
+import com.wabisabi.library.entity.User;
+import com.wabisabi.library.exception.ApiException;
+import com.wabisabi.library.repository.BookRepository;
+import com.wabisabi.library.repository.FavoriteRepository;
+import com.wabisabi.library.repository.UserRepository;
+
+/**
+ * 收藏的規則。每個方法的第一個參數 userId 都來自 Session（Controller 傳進來），不是前端給的。
+ */
+@Service
+public class FavoriteService {
+
+	private final FavoriteRepository favoriteRepository;
+	private final BookRepository bookRepository;
+	private final UserRepository userRepository;
+
+	public FavoriteService(FavoriteRepository favoriteRepository, BookRepository bookRepository,
+			UserRepository userRepository) {
+		this.favoriteRepository = favoriteRepository;
+		this.bookRepository = bookRepository;
+		this.userRepository = userRepository;
+	}
+
+	/**
+	 * 加入收藏。順序：ISBN 格式 → 書存在嗎 → 已經收藏過嗎 → 新增。
+	 */
+	public void add(Long userId, String rawIsbn) {
+		String isbn = BookService.normalizeIsbn(rawIsbn);
+
+		// 書一定要先在本機 books 表（使用者是先查詢、再按加入收藏，查詢時就已經存進來了）
+		Book book = bookRepository.findById(isbn)
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, Messages.BOOK_NOT_FOUND));
+
+		// Session 裡的會員已經不在資料庫：當作未登入
+		User user = userRepository.findById(userId)
+				.orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, Messages.LOGIN_REQUIRED));
+
+		if (favoriteRepository.existsByUserIdAndBookIsbn(userId, isbn)) {
+			throw new ApiException(HttpStatus.CONFLICT, Messages.FAVORITE_DUPLICATE);
+		}
+
+		try {
+			// saveAndFlush：立刻寫進資料庫，若違反唯一鍵會馬上在這裡丟出例外
+			favoriteRepository.saveAndFlush(new Favorite(user, book));
+		} catch (DataIntegrityViolationException e) {
+			// 極少見：同一時間按了兩次，兩個請求都通過上面的檢查，資料庫的唯一鍵擋下第二筆
+			throw new ApiException(HttpStatus.CONFLICT, Messages.FAVORITE_DUPLICATE);
+		}
+	}
+
+	/** 取得這位會員自己的收藏清單 */
+	public List<FavoriteResponse> list(Long userId) {
+		List<FavoriteResponse> result = new ArrayList<>();
+		for (Favorite favorite : favoriteRepository.findByUserIdOrderByIdAsc(userId)) {
+			result.add(new FavoriteResponse(favorite));
+		}
+		return result;
+	}
+
+	/**
+	 * 刪除收藏：只能刪自己的。
+	 * 收藏不存在、或不是自己的，一律回 404（不透露「這筆收藏存在但屬於別人」）。
+	 */
+	public void remove(Long userId, Long favoriteId) {
+		Favorite favorite = favoriteRepository.findByIdAndUserId(favoriteId, userId)
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, Messages.FAVORITE_NOT_FOUND));
+		favoriteRepository.delete(favorite);
+	}
+
+	/**
+	 * 修改收藏的種類（BDD v1.4.0 需求 9）。順序：種類是否在清單中 → 收藏是不是自己的 → 存檔。
+	 * 收藏不存在、或不是自己的，一律回 404（和刪除的規則相同）。
+	 */
+	public void updateCategory(Long userId, Long favoriteId, String rawCategory) {
+		String category = (rawCategory == null) ? "" : rawCategory.trim();
+		if (!Categories.isValid(category)) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, Messages.CATEGORY_INVALID);
+		}
+
+		Favorite favorite = favoriteRepository.findByIdAndUserId(favoriteId, userId)
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, Messages.FAVORITE_NOT_FOUND));
+
+		favorite.setCategory(category);
+		favoriteRepository.save(favorite);
+	}
+}
+```
+
+**`backend/src/main/java/com/wabisabi/library/controller/FavoriteController.java`**（修改後全文）
+
+```java
+package com.wabisabi.library.controller;
+
+import java.util.List;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.wabisabi.library.common.Messages;
+import com.wabisabi.library.common.SessionKeys;
+import com.wabisabi.library.dto.AddFavoriteRequest;
+import com.wabisabi.library.dto.FavoriteResponse;
+import com.wabisabi.library.dto.MessageResponse;
+import com.wabisabi.library.dto.UpdateCategoryRequest;
+import com.wabisabi.library.service.FavoriteService;
+
+import jakarta.servlet.http.HttpSession;
+
+/**
+ * 收藏 API：全部需要登入（LoginInterceptor 已經在門口檢查過）。
+ * 「是誰」一律從 Session 取得，不相信前端傳來的任何 user_id。
+ */
+@RestController
+@RequestMapping("/api/favorites")
+public class FavoriteController {
+
+	private final FavoriteService favoriteService;
+
+	public FavoriteController(FavoriteService favoriteService) {
+		this.favoriteService = favoriteService;
+	}
+
+	/** GET /api/favorites：自己的收藏清單 */
+	@GetMapping
+	public List<FavoriteResponse> list(HttpSession session) {
+		return favoriteService.list(loginUserId(session));
+	}
+
+	/**
+	 * POST /api/favorites/add，內容：{"isbn": "9789861343722"}
+	 * 成功 201；書不存在 404；重複收藏 409。
+	 */
+	@PostMapping("/add")
+	public ResponseEntity<MessageResponse> add(@RequestBody AddFavoriteRequest request, HttpSession session) {
+		favoriteService.add(loginUserId(session), request.getIsbn());
+		return ResponseEntity.status(HttpStatus.CREATED).body(new MessageResponse(Messages.FAVORITE_ADDED));
+	}
+
+	/** DELETE /api/favorites/5：刪除自己的一筆收藏；不存在或不是自己的回 404 */
+	@DeleteMapping("/{id}")
+	public MessageResponse remove(@PathVariable Long id, HttpSession session) {
+		favoriteService.remove(loginUserId(session), id);
+		return new MessageResponse(Messages.FAVORITE_REMOVED);
+	}
+
+	/**
+	 * PUT /api/favorites/5/category，內容：{"category": "散文"}
+	 * 成功 200；種類不在清單中 400；收藏不存在或不是自己的 404。
+	 * 網址符合 /api/favorites/**，所以 LoginInterceptor 會自動保護，未登入回 401。
+	 */
+	@PutMapping("/{id}/category")
+	public MessageResponse updateCategory(@PathVariable Long id, @RequestBody UpdateCategoryRequest request,
+			HttpSession session) {
+		favoriteService.updateCategory(loginUserId(session), id, request.getCategory());
+		return new MessageResponse(Messages.CATEGORY_UPDATED);
+	}
+
+	/** 從 Session 取出登入者 id */
+	private Long loginUserId(HttpSession session) {
+		return (Long) session.getAttribute(SessionKeys.USER_ID);
+	}
+}
+```
+
+**`backend/src/main/java/com/wabisabi/library/common/Messages.java`**（修改後全文）
+
+```java
+package com.wabisabi.library.common;
+
+/**
+ * 所有提示訊息集中在這裡（文字來自 BDD.md）。
+ * 要改文字只改這一個檔案，其他類別一律寫 Messages.XXX，不要直接寫中文字串。
+ */
+public final class Messages {
+
+	private Messages() {
+		// 只放常數，不需要建立物件
+	}
+
+	// ===== 書籍查詢 =====
+	public static final String ISBN_REQUIRED = "請輸入 ISBN 碼";
+	public static final String ISBN_INVALID = "ISBN 碼格式錯誤或無效";
+	public static final String BOOK_NOT_FOUND = "找不到此書籍";
+	public static final String BOOK_LOOKUP_FAILED = "查詢失敗，請稍後再試";
+
+	// ===== 登入 / 註冊 =====
+	public static final String NICKNAME_REQUIRED = "請輸入暱稱";
+	public static final String MOBILE_REQUIRED = "請輸入手機號碼";
+	public static final String NICKNAME_INVALID = "暱稱僅限英文、數字、- 與 _";
+	public static final String NICKNAME_TOO_LONG = "暱稱長度不可超過 20 個字元";
+	public static final String MOBILE_INVALID = "請輸入有效的手機號碼格式 (10碼)";
+	public static final String NICKNAME_MOBILE_MISMATCH = "暱稱與手機號碼不符";
+	public static final String NICKNAME_TAKEN = "此暱稱已被使用";
+	public static final String LOGIN_SUCCESS = "登入成功";
+	public static final String LOGOUT_SUCCESS = "已成功登出";
+	/** 未登入呼叫需要登入的 API（401） */
+	public static final String LOGIN_REQUIRED = "請先註冊/登入";
+
+	// ===== 收藏 =====
+	public static final String FAVORITE_ADDED = "已成功加入收藏";
+	public static final String FAVORITE_DUPLICATE = "此書籍已在收藏清單中，請勿重複收藏";
+	public static final String FAVORITE_REMOVED = "已移除收藏";
+	/** 刪除時找不到收藏，或收藏不是自己的（BDD 未定義，計畫階段補充） */
+	public static final String FAVORITE_NOT_FOUND = "找不到此收藏";
+
+	// ===== 收藏書籍種類（BDD v1.4.0 需求 9） =====
+	public static final String CATEGORY_UPDATED = "已更新書籍種類";
+	public static final String CATEGORY_INVALID = "書籍種類不正確";
+
+	// ===== 通用（BDD 未定義，計畫階段補充） =====
+	/** 程式沒預料到的錯誤（500） */
+	public static final String SERVER_ERROR = "系統發生錯誤，請稍後再試";
+	/** 網址不存在、HTTP 方法不對、JSON 格式壞掉等 Spring 自己擋下的請求 */
+	public static final String REQUEST_FAILED = "無法處理此請求";
+}
+```
+
+**白話解釋**
+- `GET /api/categories` 直接回傳 `Categories.ALL`，Jackson 會把 `List<String>` 轉成 JSON 陣列。它沒有被攔截器保護，所以**未登入也能取得**（種類清單不是個人資料）。
+- `updateCategory` 的檢查順序：**種類合不合法 → 收藏是不是自己的 → 存檔**。和「加入收藏先檢查 ISBN 格式、再找書」一樣，先檢查請求內容，再查資料庫。
+- `findByIdAndUserId`（步驟 5 就有了）一次做完「找資料＋檢查擁有者」：別人的收藏一律找不到，回 404。
+- **攔截器不用改**：`PUT /api/favorites/{id}/category` 符合 `WebConfig` 裡既有的 `/api/favorites/**`，自動受保護。這就是步驟 4 用「萬用字元」設定路徑的好處。
+
+### 15-4 後端測試
+
+**`backend/src/test/java/com/wabisabi/library/CategoryApiTest.java`**
+
+```java
+package com.wabisabi.library;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.web.servlet.MockMvc;
+
+/**
+ * 需求 9：書籍種類清單（GET /api/categories）。
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+class CategoryApiTest {
+
+	@Autowired
+	private MockMvc mockMvc;
+
+	@Test
+	@DisplayName("規則：種類清單公開，不需要登入，依固定順序回傳 11 種（第一個是「未分類」）")
+	void listCategories() throws Exception {
+		mockMvc.perform(get("/api/categories")) // 沒有帶 Session = 未登入
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.length()").value(11))
+				.andExpect(jsonPath("$[0]").value("未分類"))
+				.andExpect(jsonPath("$[1]").value("小說"))
+				.andExpect(jsonPath("$[2]").value("散文"))
+				.andExpect(jsonPath("$[3]").value("詩"))
+				.andExpect(jsonPath("$[4]").value("人文歷史"))
+				.andExpect(jsonPath("$[5]").value("心理勵志"))
+				.andExpect(jsonPath("$[6]").value("商業理財"))
+				.andExpect(jsonPath("$[7]").value("科學"))
+				.andExpect(jsonPath("$[8]").value("電腦資訊"))
+				.andExpect(jsonPath("$[9]").value("藝術設計"))
+				.andExpect(jsonPath("$[10]").value("其他"));
+	}
+}
+```
+
+**`backend/src/test/java/com/wabisabi/library/FavoriteApiTest.java`**（修改後全文）
+
+```java
+package com.wabisabi.library;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.containsString;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.util.Map;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+
+import com.wabisabi.library.entity.Favorite;
+import com.wabisabi.library.entity.User;
+import com.wabisabi.library.repository.FavoriteRepository;
+import com.wabisabi.library.repository.UserRepository;
+
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * 需求 2、3、4、8：加入收藏、收藏清單、刪除收藏、未登入的權限控管。
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+class FavoriteApiTest {
+
+	private static final String SEED_MOBILE = "0900123456";
+	private static final String WABI_SABI_ISBN = "9789861343722";
+	private static final String QUESTION_ISBN = "9789863980315";
+
+	@Autowired
+	private MockMvc mockMvc;
+
+	@Autowired
+	private UserRepository userRepository;
+
+	@Autowired
+	private FavoriteRepository favoriteRepository;
+
+	private final JsonMapper jsonMapper = JsonMapper.builder().build();
+
+	@BeforeEach
+	void setUp() {
+		// 每個測試都從「只有種子會員 Cooqle、沒有任何收藏」的狀態開始
+		favoriteRepository.deleteAll();
+		for (User user : userRepository.findAll()) {
+			if (!user.getMobile().equals(SEED_MOBILE)) {
+				userRepository.delete(user);
+			}
+		}
+	}
+
+	// ===== 小工具 =====
+
+	/** 登入（或註冊）並取得 Session */
+	private MockHttpSession login(String nickname, String mobile) throws Exception {
+		String json = jsonMapper.writeValueAsString(Map.of("nickname", nickname, "mobile", mobile));
+		return (MockHttpSession) mockMvc
+				.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON).content(json))
+				.andExpect(status().isOk())
+				.andReturn().getRequest().getSession(false);
+	}
+
+	/** 加入收藏 */
+	private ResultActions addFavorite(MockHttpSession session, String isbn) throws Exception {
+		String json = jsonMapper.writeValueAsString(Map.of("isbn", isbn));
+		return mockMvc.perform(post("/api/favorites/add")
+				.session(session).contentType(MediaType.APPLICATION_JSON).content(json));
+	}
+
+	/** 修改收藏種類（BDD v1.4.0 需求 9） */
+	private ResultActions updateCategory(MockHttpSession session, Long favoriteId, String category) throws Exception {
+		String json = jsonMapper.writeValueAsString(Map.of("category", category));
+		return mockMvc.perform(put("/api/favorites/{id}/category", favoriteId)
+				.session(session).contentType(MediaType.APPLICATION_JSON).content(json));
+	}
+
+	/** 找出某位會員收藏某本書的那一筆 */
+	private Favorite favoriteOf(String mobile, String isbn) {
+		Long userId = userRepository.findByMobile(mobile).orElseThrow().getId();
+		return favoriteRepository.findByUserIdOrderByIdAsc(userId).stream()
+				.filter(f -> f.getBook().getIsbn().equals(isbn))
+				.findFirst().orElseThrow();
+	}
+
+	private long favoriteCountOf(String mobile) {
+		Long userId = userRepository.findByMobile(mobile).orElseThrow().getId();
+		return favoriteRepository.findByUserIdOrderByIdAsc(userId).size();
+	}
+
+	// ===== 需求 2：加入收藏 =====
+
+	@Test
+	@DisplayName("Scenario: 已登入會員成功將書籍加入個人收藏")
+	void addFavoriteSuccess() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+
+		addFavorite(cooqle, WABI_SABI_ISBN)
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.message").value("已成功加入收藏"));
+
+		Long cooqleId = userRepository.findByMobile(SEED_MOBILE).orElseThrow().getId();
+		assertThat(favoriteRepository.existsByUserIdAndBookIsbn(cooqleId, WABI_SABI_ISBN)).isTrue();
+	}
+
+	@Test
+	@DisplayName("Scenario: 已登入會員重複收藏書籍時跳出提示")
+	void addFavoriteDuplicate() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+
+		addFavorite(cooqle, WABI_SABI_ISBN)
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.message").value("此書籍已在收藏清單中，請勿重複收藏"));
+
+		assertThat(favoriteCountOf(SEED_MOBILE)).isEqualTo(1); // 數量沒有增加
+	}
+
+	@Test
+	@DisplayName("規則：加入本機沒有的書 → 404 找不到此書籍")
+	void addFavoriteBookNotFound() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+
+		addFavorite(cooqle, "9780000000000")
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.message").value("找不到此書籍"));
+	}
+
+	@Test
+	@DisplayName("規則：加入收藏時 ISBN 格式錯誤 → 400")
+	void addFavoriteInvalidIsbn() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+
+		addFavorite(cooqle, "INVALID_ISBN")
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.message").value("ISBN 碼格式錯誤或無效"));
+	}
+
+	@Test
+	@DisplayName("規則：不相信前端傳來的 user_id，收藏一律記在登入者名下")
+	void ignoreUserIdFromClient() throws Exception {
+		login("Reader_B", "0911222333"); // 先註冊 Reader_B
+		Long readerBId = userRepository.findByMobile("0911222333").orElseThrow().getId();
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+
+		// Cooqle 登入中，卻在內容裡偷塞 Reader_B 的 id
+		String json = jsonMapper.writeValueAsString(Map.of("isbn", WABI_SABI_ISBN, "userId", readerBId));
+		mockMvc.perform(post("/api/favorites/add").session(cooqle).contentType(MediaType.APPLICATION_JSON).content(json))
+				.andExpect(status().isCreated());
+
+		assertThat(favoriteCountOf(SEED_MOBILE)).isEqualTo(1);
+		assertThat(favoriteCountOf("0911222333")).isZero();
+	}
+
+	// ===== 需求 3：收藏清單 =====
+
+	@Test
+	@DisplayName("Scenario: 已登入會員在收藏頁面檢視自己的收藏清單")
+	void listOwnFavorites() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+		addFavorite(cooqle, QUESTION_ISBN).andExpect(status().isCreated());
+
+		// 別的會員的收藏不應該出現在 Cooqle 的清單
+		MockHttpSession readerB = login("Reader_B", "0911222333");
+		addFavorite(readerB, QUESTION_ISBN).andExpect(status().isCreated());
+
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.length()").value(2))
+				.andExpect(jsonPath("$[0].isbn").value(WABI_SABI_ISBN))
+				.andExpect(jsonPath("$[0].title").value("侘寂：尋找日常中的不完美之美"))
+				.andExpect(jsonPath("$[0].author").value("雷納·克魯克"))
+				.andExpect(jsonPath("$[0].id").isNumber()) // 「刪除」按鈕要用的收藏編號
+				.andExpect(jsonPath("$[1].isbn").value(QUESTION_ISBN))
+				.andExpect(jsonPath("$[1].title").value("提問的設計"));
+	}
+
+	@Test
+	@DisplayName("規則：還沒有收藏時回傳空陣列")
+	void listEmpty() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.length()").value(0));
+	}
+
+	// ===== 需求 8：未登入的權限控管 =====
+
+	@Test
+	@DisplayName("Scenario: 未登入直接呼叫收藏相關 API 被拒絕 (查詢、新增、刪除、修改種類都回 401)")
+	void favoritesRequireLogin() throws Exception {
+		// 先讓 Cooqle 有一筆收藏，確認未登入的回應裡不會洩漏它
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+		Long favoriteId = favoriteRepository.findAll().get(0).getId();
+
+		mockMvc.perform(get("/api/favorites"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.message").value("請先註冊/登入"))
+				.andExpect(content().string(not(containsString("侘寂"))));
+
+		mockMvc.perform(post("/api/favorites/add").contentType(MediaType.APPLICATION_JSON)
+				.content("{\"isbn\":\"" + QUESTION_ISBN + "\"}"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.message").value("請先註冊/登入"));
+
+		mockMvc.perform(delete("/api/favorites/{id}", favoriteId))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.message").value("請先註冊/登入"));
+
+		// v1.4.0：修改種類也要登入
+		mockMvc.perform(put("/api/favorites/{id}/category", favoriteId)
+				.contentType(MediaType.APPLICATION_JSON).content("{\"category\":\"散文\"}"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.message").value("請先註冊/登入"));
+
+		assertThat(favoriteRepository.count()).isEqualTo(1); // 什麼都沒被改到
+		assertThat(favoriteRepository.findAll().get(0).getCategory()).isNull(); // 種類也沒被改
+	}
+
+	@Test
+	@DisplayName("Scenario: 在個人頁面登出後無法再查看收藏內容")
+	void cannotSeeFavoritesAfterLogout() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+
+		mockMvc.perform(post("/api/auth/logout").session(cooqle))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.message").value("已成功登出"));
+
+		// 帶著登出前的 Session 再來查收藏
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(status().isUnauthorized())
+				.andExpect(content().string(not(containsString("侘寂"))));
+	}
+
+	// ===== 需求 4：刪除收藏 =====
+
+	@Test
+	@DisplayName("Scenario: 會員從收藏頁面成功刪除書籍")
+	void removeFavoriteSuccess() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+		Long favoriteId = favoriteRepository.findAll().get(0).getId();
+
+		mockMvc.perform(delete("/api/favorites/{id}", favoriteId).session(cooqle))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.message").value("已移除收藏"));
+
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(jsonPath("$.length()").value(0));
+	}
+
+	@Test
+	@DisplayName("Scenario: 會員無法刪除其他會員的收藏（回 404）")
+	void cannotRemoveOthersFavorite() throws Exception {
+		MockHttpSession readerB = login("Reader_B", "0911222333");
+		addFavorite(readerB, QUESTION_ISBN).andExpect(status().isCreated());
+		Favorite readerBFavorite = favoriteRepository.findAll().get(0);
+
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		mockMvc.perform(delete("/api/favorites/{id}", readerBFavorite.getId()).session(cooqle))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.message").value("找不到此收藏"));
+
+		// Reader_B 的收藏清單維持不變
+		assertThat(favoriteRepository.existsById(readerBFavorite.getId())).isTrue();
+		assertThat(favoriteCountOf("0911222333")).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("規則：刪除時 id 不是數字 → 400（不是 500）")
+	void removeWithNonNumericId() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+
+		mockMvc.perform(delete("/api/favorites/{id}", "abc").session(cooqle))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.message").value("無法處理此請求"));
+	}
+
+	@Test
+	@DisplayName("規則：刪除不存在的收藏 → 404")
+	void removeNonExisting() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+
+		mockMvc.perform(delete("/api/favorites/{id}", 999999).session(cooqle))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.message").value("找不到此收藏"));
+	}
+
+	// ===== 需求 9：收藏書籍種類（BDD v1.4.0） =====
+
+	@Test
+	@DisplayName("Scenario: 新加入的收藏預設為「未分類」")
+	void newFavoriteIsUncategorized() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$[0].category").value("未分類"));
+	}
+
+	@Test
+	@DisplayName("Scenario: 會員為收藏的書籍設定種類（重新查詢後仍保留）")
+	void updateCategorySuccess() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+		Long favoriteId = favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getId();
+
+		updateCategory(cooqle, favoriteId, "散文")
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.message").value("已更新書籍種類"));
+
+		// 「重新整理頁面」＝再查一次清單：種類應該已經存進資料庫
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(jsonPath("$[0].category").value("散文"));
+		assertThat(favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getCategory()).isEqualTo("散文");
+	}
+
+	@Test
+	@DisplayName("Scenario: 依種類檢視收藏（清單回傳每本書的種類，供前端篩選與計算本數）")
+	void listReturnsEachCategory() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+		addFavorite(cooqle, QUESTION_ISBN).andExpect(status().isCreated());
+		updateCategory(cooqle, favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getId(), "散文").andExpect(status().isOk());
+		updateCategory(cooqle, favoriteOf(SEED_MOBILE, QUESTION_ISBN).getId(), "心理勵志").andExpect(status().isOk());
+
+		mockMvc.perform(get("/api/favorites").session(cooqle))
+				.andExpect(jsonPath("$.length()").value(2))
+				.andExpect(jsonPath("$[0].isbn").value(WABI_SABI_ISBN))
+				.andExpect(jsonPath("$[0].category").value("散文"))
+				.andExpect(jsonPath("$[1].isbn").value(QUESTION_ISBN))
+				.andExpect(jsonPath("$[1].category").value("心理勵志"));
+	}
+
+	@Test
+	@DisplayName("Scenario: 種類只能從清單中選擇（武俠 → 400 書籍種類不正確）")
+	void updateCategoryRejectsUnknown() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+		Long favoriteId = favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getId();
+
+		updateCategory(cooqle, favoriteId, "武俠")
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.message").value("書籍種類不正確"));
+
+		assertThat(favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getCategory()).isNull(); // 維持不變
+	}
+
+	@Test
+	@DisplayName("規則：種類空白 → 400 書籍種類不正確")
+	void updateCategoryRejectsBlank() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		addFavorite(cooqle, WABI_SABI_ISBN).andExpect(status().isCreated());
+
+		updateCategory(cooqle, favoriteOf(SEED_MOBILE, WABI_SABI_ISBN).getId(), "   ")
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.message").value("書籍種類不正確"));
+	}
+
+	@Test
+	@DisplayName("Scenario: 會員無法修改其他會員收藏的種類（回 404）")
+	void cannotUpdateOthersCategory() throws Exception {
+		MockHttpSession readerB = login("Reader_B", "0911222333");
+		addFavorite(readerB, QUESTION_ISBN).andExpect(status().isCreated());
+		Long readerBFavoriteId = favoriteOf("0911222333", QUESTION_ISBN).getId();
+
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+		updateCategory(cooqle, readerBFavoriteId, "散文")
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.message").value("找不到此收藏"));
+
+		assertThat(favoriteOf("0911222333", QUESTION_ISBN).getCategory()).isNull(); // Reader_B 的維持不變
+	}
+
+	@Test
+	@DisplayName("規則：修改不存在的收藏種類 → 404")
+	void updateCategoryOfNonExisting() throws Exception {
+		MockHttpSession cooqle = login("Cooqle", SEED_MOBILE);
+
+		updateCategory(cooqle, 999999L, "散文")
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.message").value("找不到此收藏"));
+	}
+}
+```
+
+**白話解釋**
+- 新增的小工具 `updateCategory(...)` 送出 PUT；`favoriteOf(手機, ISBN)` 找出某位會員收藏某本書的那一筆，方便檢查資料庫裡的種類有沒有被改。
+- `updateCategorySuccess` 檢查兩件事：API 回「已更新書籍種類」，以及**再查一次清單**種類還在（等於「重新整理頁面後仍保留」）。
+- `updateCategoryRejectsUnknown`、`cannotUpdateOthersCategory` 最後都用 `isNull()` 確認種類**沒有被改到**。錯誤時不只回對訊息，資料也不能動。
+
+### 15-5 前端：下拉選單 BaseSelect.vue、種類按鈕 CategoryChips.vue
+
+**`frontend/src/components/BaseSelect.vue`**
+
+```vue
+<!--
+  下拉選單（DESIGN.md 4.12）：前面一行次要色標籤＋白色下拉選單，標籤與選單在同一列。
+  用法：<BaseSelect v-model="category" label="種類：" :options="['未分類', '小說']" />
+    想在使用者「選了之後」做事（例如存檔），可以聽 @update:model-value
+-->
+<script setup>
+import { useId } from 'vue'
+
+defineProps({
+  label: { type: String, required: true },
+  /** 選項清單（字串陣列），顯示文字與值相同 */
+  options: { type: Array, default: () => [] },
+  disabled: { type: Boolean, default: false },
+})
+
+const model = defineModel({ type: String, default: '' })
+
+// <label for> 對到 <select id>，點標籤就能聚焦選單
+const selectId = useId()
+</script>
+
+<template>
+  <div class="select-field">
+    <label class="select-field__label" :for="selectId">{{ label }}</label>
+    <select :id="selectId" v-model="model" class="select-field__select" :disabled="disabled">
+      <!-- 目前的值不在清單裡時（例如清單還沒載入），仍然要顯示得出來 -->
+      <option v-if="model && !options.includes(model)" :value="model">{{ model }}</option>
+      <option v-for="option in options" :key="option" :value="option">{{ option }}</option>
+    </select>
+  </div>
+</template>
+
+<style scoped>
+.select-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.select-field__label {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-size: 0.95em;
+}
+
+.select-field__select {
+  width: 160px;
+  min-height: var(--tap-min); /* 至少 44px，方便手指點 */
+  padding: 0 12px;
+  background: var(--color-input-bg);
+  border: var(--line) solid var(--color-border);
+  border-radius: var(--radius-input);
+  font: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.select-field__select:focus {
+  outline: none;
+  border-color: var(--color-text-muted);
+}
+
+.select-field__select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 手機：選單滿寬（DESIGN.md 3.1） */
+@media (max-width: 767px) {
+  .select-field__select {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
+}
+</style>
+```
+
+**`frontend/src/components/CategoryChips.vue`**
+
+```vue
+<!--
+  種類按鈕列（DESIGN.md 4.11）：膠囊形狀的按鈕，點了就切換篩選的種類。
+  用法：<CategoryChips v-model="selected" :total="5" :chips="[{ name: '散文', count: 1 }]" />
+    v-model：目前選中的種類；空字串 '' 代表「全部」
+    total：全部的本數（第一個按鈕「全部 (N)」）
+    chips：要顯示的種類與本數（只傳有書的種類，順序由呼叫的人決定）
+-->
+<script setup>
+defineProps({
+  total: { type: Number, required: true },
+  chips: { type: Array, default: () => [] },
+})
+
+const selected = defineModel({ type: String, default: '' })
+</script>
+
+<template>
+  <div class="chips" role="group" aria-label="依種類篩選">
+    <button
+      type="button"
+      :class="['chip', { 'is-selected': selected === '' }]"
+      :aria-pressed="selected === ''"
+      @click="selected = ''"
+    >
+      全部 ({{ total }})
+    </button>
+    <button
+      v-for="chip in chips"
+      :key="chip.name"
+      type="button"
+      :class="['chip', { 'is-selected': selected === chip.name }]"
+      :aria-pressed="selected === chip.name"
+      @click="selected = chip.name"
+    >
+      {{ chip.name }} ({{ chip.count }})
+    </button>
+  </div>
+</template>
+
+<style scoped>
+.chips {
+  display: flex;
+  flex-wrap: wrap; /* 按鈕太多時自動換行 */
+  gap: 12px;
+}
+
+/* 膠囊形狀的按鈕 */
+.chip {
+  min-height: var(--tap-min); /* 至少 44px，方便手指點 */
+  padding: 0 20px;
+  background: var(--color-surface);
+  border: var(--line) solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--color-text-muted);
+}
+
+/* 選中的按鈕：和主要按鈕同色系 */
+.chip.is-selected {
+  background: var(--color-text);
+  border-color: var(--color-text);
+  color: var(--color-bg);
+}
+
+@media (max-width: 767px) {
+  .chips {
+    gap: 8px;
+  }
+
+  .chip {
+    padding: 0 16px;
+    font-size: 15px;
+  }
+}
+</style>
+```
+
+**白話解釋**
+- 兩個元件都用 `defineModel()`，父元件可以寫 `v-model`（和 `BaseInput` 一樣）。
+- `BaseSelect` 的 `<option v-if="model && !options.includes(model)">`：種類清單還沒從 API 載入（或載入失敗）時，下拉選單至少還能顯示目前的種類，不會變成空白。
+- `CategoryChips` 用空字串 `''` 代表「全部」，`aria-pressed` 告訴螢幕報讀軟體「這顆按鈕目前是按下的」。
+- `border-radius: 999px`：圓角設得比按鈕高度還大，兩端就會變成半圓，也就是「膠囊」形狀。
+
+### 15-6 收藏頁：FavoritesView.vue（修改後全文）
+
+**`frontend/src/views/FavoritesView.vue`**
+
+```vue
+<!--
+  收藏頁 /favorites（DESIGN.md 5.3）：需要登入（路由守衛把關）。
+  (a) 已登入：收藏清單，每本書旁邊有「刪除」；沒有收藏時顯示空狀態框。
+      v1.4.0：搜尋框、種類按鈕列、卡片內的種類下拉選單（BDD 需求 9、10）。
+  (b) 未登入提示畫面：只在「停留在本頁時 Session 失效（API 回 401）」時顯示（備用）。
+-->
+<script setup>
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import PageTitle from '@/components/PageTitle.vue'
+import BaseCard from '@/components/BaseCard.vue'
+import BaseInput from '@/components/BaseInput.vue'
+import BaseSelect from '@/components/BaseSelect.vue'
+import BookCover from '@/components/BookCover.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import CategoryChips from '@/components/CategoryChips.vue'
+import ErrorBox from '@/components/ErrorBox.vue'
+import EmptyBox from '@/components/EmptyBox.vue'
+import { api } from '@/api'
+import { auth, setLoggedOut } from '@/auth'
+import { showToast } from '@/toast'
+import { MESSAGES } from '@/messages'
+
+const router = useRouter()
+
+const favorites = ref([]) // 收藏清單
+const categories = ref([]) // 種類清單（從後端 GET /api/categories 取得）
+const loading = ref(true) // 第一次載入中
+const sessionExpired = ref(false) // Session 失效 → 顯示未登入提示畫面
+const errorMessage = ref('') // 其他錯誤（例如連不上後端）
+const deletingId = ref(null) // 正在刪除哪一筆（按鈕暫時停用）
+const savingCategoryId = ref(null) // 正在儲存哪一筆的種類（下拉選單暫時停用）
+
+// ===== 篩選條件（BDD v1.4.0 需求 9、10） =====
+const keyword = ref('') // 搜尋框的內容
+const selectedCategory = ref('') // 選中的種類；'' 代表「全部」
+
+// onMounted：頁面顯示出來之後執行一次；收藏與種類清單同時載入
+onMounted(() => {
+  loadFavorites()
+  loadCategories()
+})
+
+async function loadFavorites() {
+  loading.value = true
+  const result = await api.get('/api/favorites')
+  loading.value = false
+
+  if (result.ok) {
+    favorites.value = result.data
+  } else if (result.status === 401) {
+    handleSessionExpired()
+  } else {
+    errorMessage.value = result.data.message
+  }
+}
+
+async function loadCategories() {
+  const result = await api.get('/api/categories')
+  if (result.ok) {
+    categories.value = result.data
+  }
+  // 失敗時清單維持空的：下拉選單仍會顯示每本書目前的種類，只是暫時不能改成別的
+}
+
+// ===== computed：由其他資料「算出來」的值，來源一變就自動重算 =====
+
+/** 種類按鈕：只列出有書的種類，依後端種類清單的順序排列 */
+const chips = computed(() => {
+  const counts = {}
+  for (const item of favorites.value) {
+    counts[item.category] = (counts[item.category] || 0) + 1
+  }
+  // 依種類清單排序；萬一有清單以外的種類（理論上不會），排在最後
+  const ordered = [...categories.value, ...Object.keys(counts).filter((c) => !categories.value.includes(c))]
+  return ordered.filter((name) => counts[name] > 0).map((name) => ({ name, count: counts[name] }))
+})
+
+/** 套用種類與搜尋後，要顯示的收藏 */
+const visibleFavorites = computed(() => {
+  const word = keyword.value.trim().toLowerCase()
+  return favorites.value.filter((item) => {
+    // 條件 1：種類（「全部」就不過濾）
+    if (selectedCategory.value !== '' && item.category !== selectedCategory.value) {
+      return false
+    }
+    // 條件 2：關鍵字（書名、作者、ISBN 任一包含就算符合，不分大小寫）
+    if (word === '') {
+      return true
+    }
+    const text = `${item.title} ${item.author || ''} ${item.isbn}`.toLowerCase()
+    return text.includes(word)
+  })
+})
+
+/** 是否正在篩選（有選種類或有輸入關鍵字）：決定要不要顯示「顯示 X 本」 */
+const isFiltering = computed(() => selectedCategory.value !== '' || keyword.value.trim() !== '')
+
+// 選中的種類變成 0 本時（改了種類或刪除之後），自動切回「全部」（DESIGN.md 4.11）
+watch(chips, (list) => {
+  if (selectedCategory.value !== '' && !list.some((chip) => chip.name === selectedCategory.value)) {
+    selectedCategory.value = ''
+  }
+})
+
+/** 在下拉選單選了新的種類：立刻存檔 */
+async function changeCategory(item, newCategory) {
+  if (newCategory === item.category) {
+    return
+  }
+
+  savingCategoryId.value = item.id
+  const result = await api.put(`/api/favorites/${item.id}/category`, { category: newCategory })
+  savingCategoryId.value = null
+
+  if (result.ok) {
+    item.category = newCategory // 存檔成功才更新畫面；種類按鈕的本數會自動重算
+    showToast(result.data.message) // 已更新書籍種類
+  } else if (result.status === 401) {
+    handleSessionExpired()
+  } else {
+    // 失敗時 item.category 沒變，下拉選單會自動回到原本的種類
+    showToast(result.data.message, 'error')
+  }
+}
+
+/** 按下某本書的「刪除」 */
+async function removeFavorite(item) {
+  // 瀏覽器內建的確認視窗：按「取消」就什麼都不做（DESIGN.md 4.9）
+  if (!window.confirm(MESSAGES.DELETE_CONFIRM)) {
+    return
+  }
+
+  deletingId.value = item.id
+  const result = await api.delete(`/api/favorites/${item.id}`)
+  deletingId.value = null
+
+  if (result.ok) {
+    showToast(result.data.message) // 已移除收藏
+    // 從畫面上的清單拿掉這一筆（「共 N 本」與種類按鈕的本數會自動跟著更新）
+    favorites.value = favorites.value.filter((f) => f.id !== item.id)
+  } else if (result.status === 401) {
+    handleSessionExpired()
+  } else {
+    // 例如另一個分頁已經刪掉了（404 找不到此收藏）：提示後重新載入清單
+    showToast(result.data.message, 'error')
+    loadFavorites()
+  }
+}
+
+function handleSessionExpired() {
+  setLoggedOut() // 導覽列變回「登入 / 註冊」
+  favorites.value = [] // 不再顯示任何收藏內容
+  sessionExpired.value = true
+}
+</script>
+
+<template>
+  <div class="page page--wide">
+    <PageTitle title="我的收藏 — 書籍清單" />
+
+    <!-- (b) 未登入提示畫面（Session 失效時的備用） -->
+    <template v-if="sessionExpired">
+      <ErrorBox center class="guest">
+        <p class="guest__title">您目前為未登入狀態</p>
+        <p class="guest__text">請先登入或註冊會員後，即可檢視與管理您的個人藏書</p>
+      </ErrorBox>
+      <div class="guest__action">
+        <BaseButton class="guest__button" @click="router.push('/login')">前往登入 / 註冊</BaseButton>
+      </div>
+    </template>
+
+    <!-- 其他錯誤 -->
+    <ErrorBox v-else-if="errorMessage">⚠ 錯誤提示：{{ errorMessage }}</ErrorBox>
+
+    <!-- (a) 已登入：清單（載入中先不顯示，避免閃一下「目前還沒有收藏」） -->
+    <template v-else-if="!loading">
+      <h2 class="summary">會員「{{ auth.user?.nickname }}」的私人藏書 (共 {{ favorites.length }} 本)</h2>
+
+      <EmptyBox v-if="favorites.length === 0">目前還沒有收藏的書籍</EmptyBox>
+
+      <template v-else>
+        <!-- 搜尋框＋種類按鈕列（DESIGN.md 5.3-a） -->
+        <div class="filters">
+          <BaseInput
+            v-model="keyword"
+            class="filters__search"
+            label="搜尋收藏"
+            placeholder="輸入書名、作者或 ISBN..."
+            type="search"
+          />
+          <CategoryChips v-model="selectedCategory" :total="favorites.length" :chips="chips" />
+          <p v-if="isFiltering" class="filters__count">顯示 {{ visibleFavorites.length }} 本</p>
+        </div>
+
+        <EmptyBox v-if="visibleFavorites.length === 0">{{ MESSAGES.FAVORITES_NO_MATCH }}</EmptyBox>
+
+        <ul v-else class="list">
+          <!-- v-for：清單有幾筆就畫幾張卡片；:key 讓 Vue 分辨每一筆 -->
+          <li v-for="item in visibleFavorites" :key="item.id">
+            <BaseCard class="item">
+              <!-- 左邊：封面縮圖＋書名與資訊（手機版這兩個仍在同一列） -->
+              <div class="item__main">
+                <BookCover :isbn="item.isbn" :title="item.title" size="sm" lazy />
+                <div class="item__info">
+                  <h3 class="item__title">{{ item.title }}</h3>
+                  <p class="item__meta">作者：{{ item.author || '—' }} | ISBN: {{ item.isbn }}</p>
+                  <!-- 種類下拉選單：選完立即存檔（DESIGN.md 4.12） -->
+                  <BaseSelect
+                    class="item__category"
+                    label="種類："
+                    :model-value="item.category"
+                    :options="categories"
+                    :disabled="savingCategoryId === item.id"
+                    @update:model-value="(value) => changeCategory(item, value)"
+                  />
+                </div>
+              </div>
+              <BaseButton
+                variant="danger"
+                class="item__delete"
+                :disabled="deletingId === item.id"
+                @click="removeFavorite(item)"
+              >
+                刪除
+              </BaseButton>
+            </BaseCard>
+          </li>
+        </ul>
+      </template>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+/* 左對齊粗體副標：會員「Cooqle」的私人藏書 (共 2 本) */
+.summary {
+  margin: 0 0 24px;
+  padding-left: 16px;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+/* ===== 搜尋框＋種類按鈕列 ===== */
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-bottom: 32px;
+}
+
+.filters__search {
+  width: 50%; /* 桌機約 50%（DESIGN.md 3.1） */
+}
+
+.filters__count {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.95em;
+}
+
+/* ===== 收藏清單 ===== */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px; /* 卡片間距約 24px */
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 左：書名與資訊；右：「刪除」垂直置中 */
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  padding-top: 40px;
+  padding-bottom: 40px;
+}
+
+/* 封面縮圖（64×96）與書名資訊排成一列 */
+.item__main {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-width: 0;
+}
+
+.item__info {
+  min-width: 0; /* 讓長書名可以換行，不會把按鈕擠出去 */
+}
+
+.item__title {
+  margin: 0 0 16px;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+.item__meta {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+/* 種類下拉選單：在作者行下方 */
+.item__category {
+  margin-top: 12px;
+}
+
+.item__delete {
+  flex-shrink: 0;
+  width: 220px;
+}
+
+/* ===== 未登入提示畫面 ===== */
+.guest {
+  margin-top: 48px;
+}
+
+.guest__title {
+  margin: 0 0 8px;
+  font-size: 1.15em;
+}
+
+.guest__text {
+  margin: 0;
+  font-weight: 400;
+}
+
+.guest__action {
+  display: flex;
+  justify-content: center;
+  margin-top: 56px;
+}
+
+.guest__button {
+  width: 340px;
+  max-width: 100%;
+}
+
+/* 平板：按鈕窄一點；搜尋框約 70% */
+@media (max-width: 1023px) {
+  .filters__search {
+    width: 70%;
+  }
+
+  .item {
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+
+  .item__delete {
+    width: 160px;
+  }
+}
+
+/* 手機：書名與資訊在上，「刪除」在下並滿寬；搜尋框滿寬 */
+@media (max-width: 767px) {
+  .summary {
+    padding-left: 0;
+  }
+
+  .filters {
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .filters__search {
+    width: 100%;
+  }
+
+  .item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 20px;
+    padding-top: 24px;
+    padding-bottom: 24px;
+  }
+
+  .item__main {
+    gap: 16px;
+  }
+
+  .item__info {
+    flex: 1; /* 讓手機版的下拉選單可以撐滿資訊欄 */
+  }
+
+  .item__delete {
+    width: 100%;
+  }
+
+  .guest {
+    margin-top: 24px;
+  }
+
+  .guest__action {
+    margin-top: 32px;
+  }
+}
+</style>
+```
+
+另外 `frontend/src/api.js` 新增一行 `put: (url, body) => request('PUT', url, body),`；`frontend/src/messages.js` 新增 `FAVORITES_NO_MATCH: '沒有符合條件的收藏'`。
+
+**白話解釋**
+- **三個 `computed` 是這一頁的核心**：
+  | computed | 由什麼算出來 | 用在哪裡 |
+  |---|---|---|
+  | `chips` | 收藏清單＋種類清單 | 種類按鈕：每個種類有幾本，只留有書的、依清單順序 |
+  | `visibleFavorites` | 收藏清單＋選中的種類＋搜尋關鍵字 | 畫面上真正畫出來的卡片 |
+  | `isFiltering` | 選中的種類＋搜尋關鍵字 | 要不要顯示「顯示 X 本」 |
+  改了某本書的種類、刪了一本書、打了一個字，這三個都會自動重算，**不用自己寫「更新畫面」的程式**。
+- **搜尋怎麼做到不分大小寫**：把書名、作者、ISBN 接成一串文字，和關鍵字都轉成小寫（`toLowerCase()`）再用 `includes` 比對。
+- **`watch(chips, ...)`**：例如正在看「電腦資訊」，把唯一一本改成「心理勵志」之後，「電腦資訊」按鈕就消失了；這時自動切回「全部」，畫面才不會變成空的。
+- **改種類「存檔成功才更新畫面」**：下拉選單用 `:model-value="item.category"` 單向綁定，選了之後交給 `changeCategory` 去存檔；成功才 `item.category = newCategory`。失敗時 `item.category` 沒變，下拉選單會自動跳回原本的種類。
+- `onMounted` 同時載入收藏和種類清單，兩個請求一起發出，不用一個等一個。
+
+### 對應的 Scenario（BDD v1.4.0）
+
+| BDD Scenario | 後端測試 | 瀏覽器實測 |
+|---|---|---|
+| 新加入的收藏預設為「未分類」 | ✅ `newFavoriteIsUncategorized` | ✅ |
+| 會員為收藏的書籍設定種類 | ✅ `updateCategorySuccess` | ✅（Toast、重新整理後仍保留） |
+| 依種類檢視收藏 | ✅ `listReturnsEachCategory`（回傳種類） | ✅（按鈕本數、篩選、切回全部） |
+| 種類只能從清單中選擇 | ✅ `updateCategoryRejectsUnknown` | — |
+| 會員無法修改其他會員收藏的種類 | ✅ `cannotUpdateOthersCategory` | — |
+| 未登入直接呼叫收藏相關 API 被拒絕（含修改種類） | ✅ `favoritesRequireLogin` | — |
+| 依關鍵字搜尋收藏（4 組） | 純前端 | ✅ |
+| 搜尋與種類同時使用 | 純前端 | ✅ |
+| 沒有符合條件的收藏 | 純前端 | ✅ |
+
+### 怎麼驗證成功
+
+**驗證 1：跑測試**
+```bash
+cd backend
+./mvnw test
+```
+實測結果（2026-10-23）：共 **75** 個測試全部通過（`FavoriteApiTest` 13 → 20 個、新增 `CategoryApiTest` 1 個）。
+
+**驗證 2：連 MySQL 用 curl 實測（2026-10-23）**
+| 請求 | 結果 |
+|---|---|
+| `GET /api/categories` | 200，11 種依固定順序 |
+| 加入收藏後 `GET /api/favorites` | 新的那筆 `"category":"未分類"` |
+| `PUT /api/favorites/{id}/category` `{"category":"散文"}` | 200 `已更新書籍種類`；再查一次仍是散文 |
+| 同上 `{"category":"武俠"}` | 400 `書籍種類不正確` |
+| 不存在的收藏 | 404 `找不到此收藏` |
+| 未登入 | 401 `請先註冊/登入` |
+
+**驗證 3：瀏覽器實測（2026-10-23）**
+| 情境 | 結果 |
+|---|---|
+| 種類按鈕 | 「全部 (4)」「未分類 (1)」「小說 (1)」「散文 (1)」「電腦資訊 (1)」 |
+| 點「散文」 | 只剩侘寂，顯示「顯示 1 本」 |
+| 搜尋 侘寂／clean／CLEAN／安齋／9789863980315／前後有空白的 clean | 各只剩對應的一本 |
+| 搜尋「不存在的書名」 | 「沒有符合條件的收藏」；清空後恢復 |
+| 下拉選單改種類 | Toast「已更新書籍種類」，重新整理後仍保留 |
+| 選中「電腦資訊」後把唯一一本改走 | 自動切回「全部」 |
+| 「心理勵志 (2)」＋搜尋 clean | 只剩 Clean Code |
+| RWD | 1280：搜尋框 50%、選單 160px；768：搜尋框 70%；375：搜尋框滿寬、按鈕換行、選單撐滿資訊欄；都沒有水平捲軸 |
+
+> 實測方式：你的 Eclipse 後端（8080）還是舊程式，所以我另外在 **8081** 啟動新後端，並用一份放在 scratchpad 的暫時 Vite 設定在 **5174** 開前端（`/api` 轉到 8081），完全沒有動到你的 8080／5173。測試用的收藏已刪除。
+
+**常見問題**
+| 症狀 | 原因與處理 |
+|---|---|
+| 種類按鈕出現 `undefined (1)`、下拉選單是空的 | 後端還是舊程式（沒有 category 欄位與 `/api/categories`）。在 Eclipse 停止後重新 Run `LibraryApplication` |
+| 改種類時跳「書籍種類不正確」 | 送出的種類不在 `Categories.ALL` 裡（例如前後端版本不一致）。重新整理頁面，讓前端重新取得種類清單 |
+| 想新增一種種類 | 只改 `Categories.java` 的 `ALL`，前端會自動跟著變；別忘了更新 BDD 的種類清單 |
+
+### 15-7 不開 PR：在本機合併進 main
+
+文件 commit 之後，用下面的指令把分支合併進 `main`。和 GitHub 上「Create a merge commit」的結果一樣：
+```bash
+git switch main
+```
+```bash
+git pull --ff-only
+```
+```bash
+git merge --no-ff feature/favorite-category-search
+```
+```bash
+git push origin main
+```
+```bash
+git branch -d feature/favorite-category-search
+```
+```bash
+git push origin --delete feature/favorite-category-search
+```
+- `git pull --ff-only`：先確認本機的 `main` 和 GitHub 一致；如果 GitHub 上有你電腦沒有的變更，它會停下來，不會亂合併。
+- `git merge --no-ff`：一定產生合併 commit，`git log --graph` 會清楚畫出分支合併進來的形狀。
+- 最後兩行分別刪除本機和 GitHub 上的分支。
 
 ---
 

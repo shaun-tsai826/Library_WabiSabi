@@ -40,10 +40,10 @@ requires: BDD.md v1.4.0, DESIGN.md v1.3.0
 git 操作規則：
   - commit：只有我要求時才執行。commit 前先用 git status 確認 application-local.properties 沒有被加入，
     並把要提交的檔案清單與提交訊息寫在回覆內文給我確認。
-  - 分支：新功能從 main 開 feature/ 分支，一個階段一個分支；main 只透過 Pull Request 合併。
-  - push：設定好遠端（GitHub）之後，一個階段完成（測試與實測通過、文件已 commit）時由你直接 push 功能分支，
-    時機由你判斷；不要直接 push 到 main，也不要使用 force push（--force）。
-  - Pull Request：經我同意後可以用 GitHub CLI（gh）建立；合併由我自己在 GitHub 上按（Create a merge commit）。
+  - 分支：新功能從 main 開 feature/ 分支，一個階段一個分支。
+  - push：設定好遠端（GitHub）之後，push 功能分支的時機由你判斷；不要使用 force push（--force）。
+  - 合併：不開 Pull Request。每個階段的文件 commit 之後，由你在本機用 git merge --no-ff 把分支合併進 main
+    （保留合併 commit）、跑過測試再 push main，最後刪除本機與 GitHub 上的分支。
 請建立 .gitignore，內容至少涵蓋：
   backend/target/
   backend/.classpath
@@ -180,7 +180,7 @@ backend/src/main/resources/application-local.properties（不進 git），由我
    （尤其是 Session、攔截器、JPA、全域例外處理這幾個概念）。
 5. STEPS.md 結尾寫「如何快速上手」，教我之後怎麼照著步驟自己重做一遍，不要寫成考試複習清單。
 6. 之後新增功能時：先給計畫與待決定的問題 → 確認後先改 BDD.md／DESIGN.md（並更新 PROMPT.md 的版本紀錄）
-   → 開 feature/ 分支一步一步實作 → STEPS.md 新增一節、MANUAL_TEST.md 新增測試項目 → push → PR。
+   → 開 feature/ 分支一步一步實作 → STEPS.md 新增一節、MANUAL_TEST.md 新增測試項目 → 合併進 main 並 push。
 ```
 
 ## 版本紀錄
@@ -194,6 +194,7 @@ backend/src/main/resources/application-local.properties（不進 git），由我
 - 新增：設計決策 15 收藏書籍種類（11 種、預設未分類、清單由後端提供、卡片下拉選單修改、種類按鈕篩選）。
 - 新增：設計決策 16 搜尋收藏（純前端；書名、作者、ISBN；不分大小寫；與種類同時成立）。
 - 新增：favorites.category 欄位；API GET /api/categories、PUT /api/favorites/{id}/category；GET /api/favorites 回傳 category。
+- 修改：git 規則改為不開 Pull Request；每個階段文件 commit 後，由 Claude 在本機 git merge --no-ff 合併進 main、push main、刪除分支（2026-10-23）。
 - 對應文件：BDD.md v1.4.0、DESIGN.md v1.3.0。
 
 ### v1.4.0（2026-10-21）同步開發後的實際狀態（Google 金鑰、Open Library、封面、git 流程）
