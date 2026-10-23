@@ -45,5 +45,6 @@ async function request(method, url, body) {
 export const api = {
   get: (url) => request('GET', url),
   post: (url, body) => request('POST', url, body),
+  put: (url, body) => request('PUT', url, body),
   delete: (url) => request('DELETE', url),
 }
