@@ -5,7 +5,7 @@ date: 2026-10-23
 requires: BDD.md v1.5.0, DESIGN.md v1.4.0
 ---
 
-# LIBRARY / 侘寂書閣：Claude Code 專案提示詞
+# Library_WabiSabi：Claude Code 專案提示詞
 
 使用方式：把下方程式碼區塊內的文字整段貼進 Claude Code。
 貼之前請先確認專案根目錄已有 `documents/BDD.md`、`documents/DESIGN.md`、`design/`（7 張線稿），以及空的 `frontend/`、`backend/`，且文件版本與上方 `requires` 一致。
@@ -15,7 +15,7 @@ requires: BDD.md v1.5.0, DESIGN.md v1.4.0
 【提示詞版本】v1.6.0（2026-10-23）
 【對應文件版本】BDD.md v1.5.0、DESIGN.md v1.4.0。若專案內文件的版本與此不同，請先告訴我再開始。
 
-請幫我從零建立「圖書收藏與會員系統」，網站名稱 LIBRARY（侘寂書閣）。
+請幫我從零建立「圖書收藏與會員系統」，網站名稱 Library_WabiSabi。
 
 【總原則】
 我是 Java 初學者，所有框架與技術都以「新手友善、概念少、好除錯」為優先。

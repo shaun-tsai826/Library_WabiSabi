@@ -1,4 +1,4 @@
-# STEPS.md：LIBRARY / 侘寂書閣 開發步驟紀錄
+# STEPS.md：Library_WabiSabi 開發步驟紀錄
 
 > 對應文件：BDD.md v1.5.0、DESIGN.md v1.4.0、PROMPT.md v1.6.0（步驟 16 起；步驟 15 對應 BDD v1.4.0、DESIGN v1.3.0；步驟 14 對應 BDD v1.3.0、DESIGN v1.2.0；步驟 13 對應 BDD v1.2.0；步驟 0～12 對應 BDD v1.1.0、DESIGN v1.1.0）
 > 這份文件記錄每一步「做了什麼、為什麼這樣做、怎麼確認成功」。照著從頭做一遍，就能自己重建整個專案。
@@ -202,7 +202,7 @@ backend/
 	<artifactId>library</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name>library</name>
-	<description>LIBRARY / 侘寂書閣 後端</description>
+	<description>Library_WabiSabi 後端</description>
 
 	<properties>
 		<java.version>21</java.version>
@@ -4000,7 +4000,7 @@ export default defineConfig({
     <link rel="icon" href="/favicon.ico">
     <!-- RWD 必備：讓手機用實際螢幕寬度顯示，而不是縮小的桌機版 -->
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>LIBRARY / 侘寂書閣</title>
+    <title>Library_WabiSabi</title>
   </head>
   <body>
     <div id="app"></div>
@@ -4783,7 +4783,7 @@ import { toast } from '@/toast'
 ```vue
 <!--
   頂部導覽列（DESIGN.md 4.1）：所有頁面共用。
-  左：LIBRARY / 侘寂書閣（回首頁）；右：首頁 ｜ 我的收藏 ｜ 登入 / 註冊（或「暱稱 (個人頁)」）
+  左：Library_WabiSabi（回首頁）；右：首頁 ｜ 我的收藏 ｜ 登入 / 註冊（或「暱稱 (個人頁)」）
 -->
 <script setup>
 import { useRoute } from 'vue-router'
@@ -4795,7 +4795,7 @@ const route = useRoute()
 
 <template>
   <header class="navbar">
-    <RouterLink to="/" class="navbar__logo">LIBRARY / <strong>侘寂書閣</strong></RouterLink>
+    <RouterLink to="/" class="navbar__logo"><strong>Library_WabiSabi</strong></RouterLink>
 
     <nav class="navbar__menu">
       <RouterLink to="/" :class="['navbar__item', { 'is-active': route.path === '/' }]">首頁</RouterLink>
