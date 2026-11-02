@@ -9,6 +9,7 @@ import com.wabisabi.library.entity.Favorite;
 /**
  * 收藏清單中的一筆（含書籍資料）：
  * {"id": 5, "isbn": "9789861343722", "title": "...", "author": "...", "publishDate": "2020-05-01",
+ *  "publisher": "...", "pageCount": 320, "coverUrl": "https://books.google.com/...",
  *  "category": "散文", "createdAt": "2026-10-24T10:15:30.123456"}
  * id 是「收藏」的編號，前端按「刪除」時用它呼叫 DELETE /api/favorites/{id}。
  */
@@ -19,6 +20,11 @@ public class FavoriteResponse {
 	private String title;
 	private String author;
 	private String publishDate;
+	private String publisher;
+	/** 頁數；來源沒有提供時是 null，轉成 JSON 也是 null */
+	private Integer pageCount;
+	/** 備用封面網址（Google Books）；沒有時是 null */
+	private String coverUrl;
 	/** 書籍種類；資料庫是空值時回傳「未分類」 */
 	private String category;
 	/** 收藏時間（BDD v1.5.0）：Jackson 會轉成 ISO 格式字串，前端取前 7 個字（例如 2026-10）當月份 */
@@ -34,6 +40,9 @@ public class FavoriteResponse {
 		this.title = book.getTitle();
 		this.author = book.getAuthor();
 		this.publishDate = book.getPublishDate();
+		this.publisher = book.getPublisher();
+		this.pageCount = book.getPageCount();
+		this.coverUrl = book.getCoverUrl();
 		this.category = Categories.orDefault(favorite.getCategory());
 		this.createdAt = favorite.getCreatedAt();
 	}
@@ -76,6 +85,30 @@ public class FavoriteResponse {
 
 	public void setPublishDate(String publishDate) {
 		this.publishDate = publishDate;
+	}
+
+	public String getPublisher() {
+		return publisher;
+	}
+
+	public void setPublisher(String publisher) {
+		this.publisher = publisher;
+	}
+
+	public Integer getPageCount() {
+		return pageCount;
+	}
+
+	public void setPageCount(Integer pageCount) {
+		this.pageCount = pageCount;
+	}
+
+	public String getCoverUrl() {
+		return coverUrl;
+	}
+
+	public void setCoverUrl(String coverUrl) {
+		this.coverUrl = coverUrl;
 	}
 
 	public String getCategory() {

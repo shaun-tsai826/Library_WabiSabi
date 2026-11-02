@@ -41,6 +41,10 @@ class DataSeederTest {
 		assertThat(question.getTitle()).isEqualTo("提問的設計");
 		assertThat(question.getAuthor()).isEqualTo("安齋勇樹");
 		assertThat(question.getPublishDate()).isEqualTo("2021-09-10");
+
+		// 種子書籍是示範資料，出版社存空字串，查詢時不會向外部來源補資料
+		assertThat(wabiSabi.getPublisher()).isEmpty();
+		assertThat(question.getPublisher()).isEmpty();
 	}
 
 	@Test

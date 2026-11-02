@@ -68,7 +68,9 @@ public class OpenLibraryClient {
 	 *     "title": "Clean Code",
 	 *     "subtitle": "A Handbook of Agile Software Craftsmanship",
 	 *     "authors": [ { "name": "Robert C. Martin" } ],
-	 *     "publish_date": "July 2008"
+	 *     "publish_date": "July 2008",
+	 *     "publishers": [ { "name": "Prentice Hall" } ],
+	 *     "number_of_pages": 431
 	 *   }
 	 * }
 	 */
@@ -100,9 +102,26 @@ public class OpenLibraryClient {
 		// 出版日期照原樣（可能是 "1999"、"July 2008"、"December 27, 2017"）
 		String publishDate = text(data.path("publish_date"));
 
+		// 多家出版社用「、」連接；格式和作者一樣是 [{ "name": "..." }]
+		List<String> publishers = new ArrayList<>();
+		for (JsonNode publisher : data.path("publishers")) {
+			String name = text(publisher.path("name"));
+			if (!name.isEmpty()) {
+				publishers.add(name);
+			}
+		}
+
 		// 長度不超過資料表欄位上限，避免存檔失敗
-		return Optional.of(new Book(isbn, limit(title, 255), limit(String.join("、", authors), 255),
-				limit(publishDate, 20)));
+		Book book = new Book(isbn, limit(title, 255), limit(String.join("、", authors), 255),
+				limit(publishDate, 20));
+		book.setPublisher(limit(String.join("、", publishers), 255));
+
+		// 沒有頁數時欄位不存在，當作 null
+		int pageCount = data.path("number_of_pages").asInt(0);
+		book.setPageCount(pageCount > 0 ? pageCount : null);
+
+		// 封面不用存：前端直接用 ISBN 向 Open Library 封面服務拿
+		return Optional.of(book);
 	}
 
 	/** 超過長度就截斷 */
