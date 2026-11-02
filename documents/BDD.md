@@ -1,5 +1,10 @@
 # ---------------------------------------------------------------------------
-# 版本：v1.5.0（2026-10-23）
+# 版本：v1.6.0（2026-11-02）
+# v1.6.0 修訂：
+# - 查詢結果新增「出版社」與「頁數」；Google Books 缺這兩項時，向 Open Library 補上缺的欄位，兩邊都沒有時顯示「—」
+# - 本機在 v1.6.0 之前存的書（出版社、頁數、封面都是空值）：查詢時向外部來源補一次，只補這三項
+# - 封面：Open Library 封面服務沒有時，改用 Google Books 提供的封面
+# - 首頁新增「清除」按鈕：清空輸入框與查詢結果，方便查下一本
 # v1.5.0 修訂：
 # - 收藏頁新增「清單／統計」切換；統計檢視顯示總覽數字、種類比例（圓餅圖）與每月收藏趨勢（折線圖）
 # - 收藏清單 API 回傳每筆收藏的收藏日期（createdAt）
@@ -52,6 +57,12 @@ Feature: 書本查詢、會員驗證與個人收藏管理 (Book Search, Auth, an
   #   - 所有外部來源都明確查無：「找不到此書籍」
   #   - 任一外部來源無法使用、且都沒查到：「查詢失敗，請稍後再試」
   # 封面規則（v1.3.0）：查到書籍後，於結果卡片顯示封面；沒有封面時顯示空白封面框
+  # 出版社與頁數（v1.6.0）：
+  #   - 以 Google Books 為準；Google 缺出版社或頁數時，向 Open Library 補上缺的欄位（其他欄位仍以 Google 為準）
+  #   - 兩個來源都沒有時，該欄位顯示「—」
+  #   - 本機在 v1.6.0 之前存的書，查詢時向外部來源補一次出版社、頁數與封面；書名、作者、出版日期不變
+  #   - 種子書籍為示範資料，不向外部來源補資料
+  # 封面備援（v1.6.0）：Open Library 封面服務 → Google Books 封面 → 空白封面框
   # -----------------------------------------------------------------------------
   Scenario: 成功查詢到存在的書籍資訊
     Given 使用者位於「首頁」
@@ -73,7 +84,7 @@ Feature: 書本查詢、會員驗證與個人收藏管理 (Book Search, Auth, an
     Then 頁面應顯示該書籍詳細資訊
     And 該書籍資料應被存入本機 books 資料表
     And 若 Google Books 的出版日期只有年或年月，頁面應照原樣顯示
-    And 系統不需再查詢 Open Library
+    And 若 Google Books 已提供出版社與頁數，系統不需再查詢 Open Library
 
   Scenario: 本機與 Google Books 都沒有、但 Open Library 有收錄的書籍，可查詢並存回本機
     Given 本機 books 資料表中沒有 ISBN 為 "<某個 Open Library 有收錄的 13 碼 ISBN>" 的書籍
@@ -144,6 +155,94 @@ Feature: 書本查詢、會員驗證與個人收藏管理 (Book Search, Auth, an
     Then 查詢結果卡片應在封面位置顯示空白封面框
     And 頁面不應跳出任何錯誤提示
     And 頁面應正常顯示該書籍詳細資訊與「加入收藏」按鈕
+
+  Scenario: Open Library 沒有封面時改用 Google Books 的封面（v1.6.0）
+    Given 系統可以查到 ISBN 為 "9781950539864" 的書籍
+    And Open Library 封面服務沒有該書的封面圖片
+    And Google Books 有提供該書的封面圖片
+    And 使用者位於「首頁」
+    When 使用者在 ISBN 輸入框輸入 "9781950539864"
+    And 點擊「查詢」按鈕
+    Then 查詢結果卡片應顯示 Google Books 提供的封面圖片
+    And 頁面不應跳出任何錯誤提示
+
+  # 測試時 Google Books 與 Open Library API 皆以模擬 (Mock) 回應取代，不實際連網
+  Scenario: 查詢結果顯示出版社與頁數（v1.6.0）
+    Given 本機 books 資料表中沒有 ISBN 為 "<某個 13 碼 ISBN>" 的書籍
+    And Google Books API 回傳該書籍的出版社 "Pearson Education" 與頁數 464 (模擬)
+    And 使用者位於「首頁」
+    When 使用者在 ISBN 輸入框輸入該 ISBN
+    And 點擊「查詢」按鈕
+    Then 頁面應顯示:
+      | 出版社 | Pearson Education |
+      | 頁數   | 464 頁            |
+    And 系統不需再查詢 Open Library
+
+  Scenario: Google Books 缺出版社或頁數時，由 Open Library 補上（v1.6.0）
+    Given 本機 books 資料表中沒有 ISBN 為 "<某個 13 碼 ISBN>" 的書籍
+    And Google Books API 回傳該書籍的書名、作者與出版日期，但沒有出版社與頁數 (模擬)
+    And Open Library API 回傳該書籍的出版社 "Dzanc Books" 與頁數 240 (模擬)
+    And 使用者位於「首頁」
+    When 使用者在 ISBN 輸入框輸入該 ISBN
+    And 點擊「查詢」按鈕
+    Then 頁面應顯示 Google Books 的書名、作者與出版日期
+    And 頁面應顯示出版社 "Dzanc Books" 與頁數 "240 頁"
+    And 補上的出版社與頁數應一併存入本機 books 資料表
+
+  Scenario Outline: 外部來源都沒有出版社或頁數時顯示「—」（v1.6.0）
+    Given 本機 books 資料表中沒有 ISBN 為 "<某個 13 碼 ISBN>" 的書籍
+    And Google Books API 回傳該書籍，但沒有<field> (模擬)
+    And Open Library API <open_library> (模擬)
+    When 使用者在首頁查詢該 ISBN
+    Then 頁面應正常顯示該書籍詳細資訊
+    And <field>欄位應顯示 "—"
+    And 頁面不應跳出任何錯誤提示
+
+    Examples:
+      | field  | open_library               |
+      | 頁數   | 回傳該書籍，但也沒有頁數   |
+      | 出版社 | 查無                       |
+      | 頁數   | 無法連線                   |
+
+  Scenario: 本機舊資料補上出版社、頁數與封面（v1.6.0）
+    Given 本機 books 資料表中已有 ISBN 為 "9780393356250" 的書籍「The Odyssey」，但出版社、頁數與封面都是空值
+    And Google Books API 回傳該書籍的封面，但沒有出版社與頁數 (模擬)
+    And Open Library API 回傳該書籍的出版社與頁數 592 (模擬)
+    When 使用者在首頁查詢 "9780393356250"
+    Then 頁面應顯示書名「The Odyssey」（維持本機原本的資料）
+    And 頁面應顯示補上的出版社、頁數 "592 頁" 與封面
+    And 補上的資料應存入本機 books 資料表
+    When 使用者再次查詢 "9780393356250"
+    Then 系統不需再查詢 Google Books 與 Open Library
+
+  Scenario: 本機舊資料補資料時外部來源都無法連線（v1.6.0）
+    Given 本機 books 資料表中已有出版社、頁數與封面都是空值的書籍
+    And Google Books API 與 Open Library API 都無法連線 (模擬)
+    When 使用者在首頁查詢該書籍的 ISBN
+    Then 頁面應正常顯示本機的書籍資料，出版社與頁數顯示 "—"
+    And 頁面不應跳出任何錯誤提示
+    And 下次查詢時系統應再嘗試補資料
+
+  Scenario: 點擊「清除」清空查詢，方便查詢下一本（v1.6.0）
+    Given 使用者位於「首頁」
+    And 使用者已查詢 "9789861343722"，頁面顯示查詢結果
+    When 點擊「清除」按鈕
+    Then ISBN 輸入框應被清空，且游標位於輸入框內
+    And 頁面不應顯示任何書籍詳細資訊
+    And 頁面應顯示初始的空狀態提示
+
+  Scenario: 查詢錯誤後點擊「清除」（v1.6.0）
+    Given 使用者位於「首頁」
+    And 使用者已查詢 "INVALID_ISBN"，頁面顯示錯誤提示
+    When 點擊「清除」按鈕
+    Then ISBN 輸入框應被清空
+    And 頁面不應顯示錯誤提示
+
+  Scenario: 沒有可清除的內容時「清除」按鈕停用（v1.6.0）
+    Given 使用者剛進入「首頁」，輸入框是空的且沒有查詢結果
+    Then 「清除」按鈕應為停用狀態
+    When 使用者在 ISBN 輸入框輸入任何文字
+    Then 「清除」按鈕應變為可點擊
 
   # -----------------------------------------------------------------------------
   # 需求 5 & 6: 註冊與登入驗證 (暱稱 + 手機，無密碼)

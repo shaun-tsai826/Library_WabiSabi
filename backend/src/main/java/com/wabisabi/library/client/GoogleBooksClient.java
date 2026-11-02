@@ -80,7 +80,9 @@ public class GoogleBooksClient {
 	 *   "totalItems": 1,
 	 *   "items": [
 	 *     { "volumeInfo": { "title": "書名", "subtitle": "副標題",
-	 *                       "authors": ["作者甲", "作者乙"], "publishedDate": "2020-05" } }
+	 *                       "authors": ["作者甲", "作者乙"], "publishedDate": "2020-05",
+	 *                       "publisher": "出版社", "pageCount": 320,
+	 *                       "imageLinks": { "thumbnail": "http://books.google.com/books/content?id=..." } } }
 	 *   ]
 	 * }
 	 */
@@ -114,8 +116,18 @@ public class GoogleBooksClient {
 		String publishDate = text(info.path("publishedDate"));
 
 		// 長度不超過資料表欄位上限，避免存檔失敗
-		return Optional.of(new Book(isbn, limit(title, 255), limit(String.join("、", authors), 255),
-				limit(publishDate, 20)));
+		Book book = new Book(isbn, limit(title, 255), limit(String.join("、", authors), 255),
+				limit(publishDate, 20));
+		book.setPublisher(limit(text(info.path("publisher")), 255));
+
+		// 沒有頁數時 Google 會給 0 或乾脆沒有這個欄位，都當作 null
+		int pageCount = info.path("pageCount").asInt(0);
+		book.setPageCount(pageCount > 0 ? pageCount : null);
+
+		// 封面網址是 http://，網站用 https 時瀏覽器會擋下，所以改成 https://
+		String coverUrl = text(info.path("imageLinks").path("thumbnail")).replaceFirst("^http://", "https://");
+		book.setCoverUrl(coverUrl.isEmpty() || coverUrl.length() > 500 ? null : coverUrl);
+		return Optional.of(book);
 	}
 
 	/** 超過長度就截斷 */

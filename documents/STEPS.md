@@ -1,6 +1,6 @@
 # STEPS.md：Library_WabiSabi 開發步驟紀錄
 
-> 對應文件：BDD.md v1.5.0、DESIGN.md v1.4.0、PROMPT.md v1.6.0（步驟 16 起；步驟 15 對應 BDD v1.4.0、DESIGN v1.3.0；步驟 14 對應 BDD v1.3.0、DESIGN v1.2.0；步驟 13 對應 BDD v1.2.0；步驟 0～12 對應 BDD v1.1.0、DESIGN v1.1.0）
+> 對應文件：BDD.md v1.6.0、DESIGN.md v1.5.0、PROMPT.md v1.7.0（步驟 17 起；步驟 16 對應 BDD v1.5.0、DESIGN v1.4.0；步驟 15 對應 BDD v1.4.0、DESIGN v1.3.0；步驟 14 對應 BDD v1.3.0、DESIGN v1.2.0；步驟 13 對應 BDD v1.2.0；步驟 0～12 對應 BDD v1.1.0、DESIGN v1.1.0）
 > 這份文件記錄每一步「做了什麼、為什麼這樣做、怎麼確認成功」。照著從頭做一遍，就能自己重建整個專案。
 
 ---
@@ -26,6 +26,7 @@
 - [步驟 14：書籍封面（BDD v1.3.0、DESIGN v1.2.0）](#步驟-14書籍封面bdd-v130design-v120)
 - [步驟 15：收藏書籍種類與搜尋（BDD v1.4.0、DESIGN v1.3.0）](#步驟-15收藏書籍種類與搜尋bdd-v140design-v130)
 - [步驟 16：收藏統計 Dashboard（BDD v1.5.0、DESIGN v1.4.0）](#步驟-16收藏統計-dashboardbdd-v150design-v140)
+- [步驟 17：出版社、頁數、備用封面與清除按鈕（BDD v1.6.0、DESIGN v1.5.0）](#步驟-17出版社頁數備用封面與清除按鈕bdd-v160design-v150)
 - [如何快速上手](#如何快速上手)
 
 ---
@@ -11513,6 +11514,660 @@ git branch -d feature/favorite-dashboard
 ```
 ```bash
 git push origin --delete feature/favorite-dashboard
+```
+
+---
+
+## 步驟 17：出版社、頁數、備用封面與清除按鈕（BDD v1.6.0、DESIGN v1.5.0）
+
+### 目標
+首頁查詢結果更完整，查下一本也更順手：
+1. **出版社、頁數**：結果卡片多兩行。以 Google Books 為準，Google 缺的欄位再向 Open Library 補。
+2. **備用封面**：Open Library 沒有封面時，改用 Google Books 的封面（例如 `9781950539864`）。
+3. **舊資料補一次**：加這些欄位之前就存在本機的書，查詢時向外部來源補一次出版社、頁數和封面。
+4. **清除按鈕**：一鍵清空輸入框與結果，游標回到輸入框，直接貼上下一本。
+
+| 順序 | 做什麼 | commit |
+|---|---|---|
+| 1 | 從 `main` 開分支 `feature/book-publisher-pages` | — |
+| 2 | BDD.md v1.6.0、DESIGN.md v1.5.0、PROMPT.md v1.7.0 | `e76e6f6` |
+| 3 | 後端：三個新欄位、補欄位、舊資料補一次、9 個測試 | `05ebb73` |
+| 4 | 前端：出版社與頁數、備用封面、清除按鈕 | `3573a56` |
+| 5 | 文件（本節與 MANUAL_TEST.md） | 本次 |
+| 6 | 在本機把分支合併進 `main`（保留合併 commit）、push、刪除分支 | 合併 commit |
+
+### 名詞先解釋
+- **補欄位（fill missing）**：A 來源給的資料不完整時，只拿 B 來源的「缺的那幾格」填進去，其他格子不動。就像抄同學筆記時只抄自己漏掉的那幾題。
+- **`NULL` 和空字串 `""` 的差別**：`NULL` 是「從來沒填過」，`""` 是「填過了，但真的沒有」。這一步就是靠這個差別，分辨一本書「還沒補過」還是「補過但兩邊都沒有」。
+- **`defineExpose`**：Vue 元件預設把內部的東西藏起來，父元件拿不到。用 `defineExpose({ focus })` 把 `focus` 開放出去，父元件就能用 `ref` 呼叫它。
+- **模板 ref**：在模板寫 `ref="isbnField"`，程式裡同名的 `const isbnField = ref(null)` 就會拿到那個元件（或 HTML 元素）。
+
+### 建立或修改的檔案
+```
+documents/BDD.md、DESIGN.md、PROMPT.md                         修改
+backend/src/main/java/com/wabisabi/library/
+├── entity/Book.java                       修改：publisher、page_count、cover_url 三個欄位
+├── client/GoogleBooksClient.java          修改：解析出版社、頁數、封面（改成 https）
+├── client/OpenLibraryClient.java          修改：解析出版社、頁數
+├── service/BookService.java               修改：Google 缺的欄位向 Open Library 補；舊資料補一次
+├── config/DataSeeder.java                 修改：種子書籍標記成「補過了」
+├── dto/BookResponse.java                  修改：回傳 publisher、pageCount、coverUrl
+└── dto/FavoriteResponse.java              修改：同上（收藏頁的封面也用得到 coverUrl）
+backend/src/test/java/com/wabisabi/library/
+├── BookApiTest.java                       修改：新增 5 個測試
+├── DataSeederTest.java                    修改：種子書籍的出版社是空字串
+├── client/GoogleBooksClientTest.java      修改：新增 2 個測試
+└── client/OpenLibraryClientTest.java      修改：新增 2 個測試
+frontend/src/
+├── components/BookCover.vue               修改：備用封面
+├── components/BaseInput.vue               修改：開放 focus()
+├── views/HomeView.vue                     修改：出版社、頁數、清除按鈕
+└── views/FavoritesView.vue                修改：把 coverUrl 傳給 BookCover
+```
+
+### 17-1 規格：BDD v1.6.0、DESIGN v1.5.0
+- BDD 需求 1 新增 9 個 Scenario（見下方對照表），並把「Google 查到就不再查 Open Library」改成「**Google 已提供出版社與頁數時**不再查」。
+- **資料順序沒有改**：書的資料仍然以 Google 為準（Open Library 的中文書很少），封面仍然先用 Open Library。開發前實際查過兩個 API：
+
+| 資訊 | Google Books | Open Library |
+|---|---|---|
+| 出版社 | `publisher` | `publishers[].name` |
+| 頁數 | `pageCount`（沒有時常給 0） | `number_of_pages` |
+| 封面 | `imageLinks.thumbnail`（`http://`） | 封面服務，用 ISBN 組網址 |
+
+- 例子：`9781950539864` 的 Google 沒有出版社和頁數，但有封面；Open Library 有出版社（Dzanc Books），但沒有封面。兩邊互補，剛好說明為什麼要「補欄位」和「備用封面」。
+
+### 17-2 後端：Book 新增三個欄位
+
+**`backend/src/main/java/com/wabisabi/library/entity/Book.java`**（新增的欄位；getter／setter 照原本的寫法加上）
+
+```java
+	/** 出版社：多家出版社用「、」連接 */
+	@Column(name = "publisher", length = 255)
+	private String publisher;
+
+	/** 頁數：來源沒有提供時是 null */
+	@Column(name = "page_count")
+	private Integer pageCount;
+
+	/** Google Books 的封面網址；Open Library 沒有封面時，前端改用這張 */
+	@Column(name = "cover_url", length = 500)
+	private String coverUrl;
+```
+
+- `ddl-auto=update`：後端重新啟動時，JPA 會自動在 MySQL 的 `books` 表加上 `publisher`、`page_count`、`cover_url` 三欄，**不用手動改資料表**。舊資料這三欄都是 `NULL`。
+- 頁數用 `Integer`（不是 `int`）：`int` 不能是 `null`，沒有頁數時會變成 0，畫面就會顯示「0 頁」。
+- `BookResponse`、`FavoriteResponse` 各加上 `publisher`、`pageCount`、`coverUrl` 三個欄位與 getter／setter，建構子從 `Book` 複製過來。
+
+### 17-3 後端：兩個 client 解析出版社與頁數
+
+**`GoogleBooksClient.java`** 的 `toBook` 結尾（修改後）
+
+```java
+		// 長度不超過資料表欄位上限，避免存檔失敗
+		Book book = new Book(isbn, limit(title, 255), limit(String.join("、", authors), 255),
+				limit(publishDate, 20));
+		book.setPublisher(limit(text(info.path("publisher")), 255));
+
+		// 沒有頁數時 Google 會給 0 或乾脆沒有這個欄位，都當作 null
+		int pageCount = info.path("pageCount").asInt(0);
+		book.setPageCount(pageCount > 0 ? pageCount : null);
+
+		// 封面網址是 http://，網站用 https 時瀏覽器會擋下，所以改成 https://
+		String coverUrl = text(info.path("imageLinks").path("thumbnail")).replaceFirst("^http://", "https://");
+		book.setCoverUrl(coverUrl.isEmpty() || coverUrl.length() > 500 ? null : coverUrl);
+		return Optional.of(book);
+	}
+```
+
+- 封面網址要改成 `https://`：網站用 https 時，瀏覽器會擋下 `http://` 的圖片（混合內容）。
+- 頁數用 `asInt(0)`：欄位不存在時拿到 0，再統一把 0 當成 `null`。
+
+**`OpenLibraryClient.java`** 的 `toBook` 結尾（修改後）
+
+```java
+		// 多家出版社用「、」連接；格式和作者一樣是 [{ "name": "..." }]
+		List<String> publishers = new ArrayList<>();
+		for (JsonNode publisher : data.path("publishers")) {
+			String name = text(publisher.path("name"));
+			if (!name.isEmpty()) {
+				publishers.add(name);
+			}
+		}
+
+		// 長度不超過資料表欄位上限，避免存檔失敗
+		Book book = new Book(isbn, limit(title, 255), limit(String.join("、", authors), 255),
+				limit(publishDate, 20));
+		book.setPublisher(limit(String.join("、", publishers), 255));
+
+		// 沒有頁數時欄位不存在，當作 null
+		int pageCount = data.path("number_of_pages").asInt(0);
+		book.setPageCount(pageCount > 0 ? pageCount : null);
+
+		// 封面不用存：前端直接用 ISBN 向 Open Library 封面服務拿
+		return Optional.of(book);
+	}
+```
+
+### 17-4 後端：BookService（修改後全文）
+
+**`backend/src/main/java/com/wabisabi/library/service/BookService.java`**
+
+```java
+package com.wabisabi.library.service;
+
+import java.util.Optional;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+
+import com.wabisabi.library.client.BookSourceUnavailableException;
+import com.wabisabi.library.client.GoogleBooksClient;
+import com.wabisabi.library.client.OpenLibraryClient;
+import com.wabisabi.library.common.Messages;
+import com.wabisabi.library.dto.BookResponse;
+import com.wabisabi.library.entity.Book;
+import com.wabisabi.library.exception.ApiException;
+import com.wabisabi.library.repository.BookRepository;
+
+/**
+ * 書籍查詢的規則都在這裡。
+ */
+@Service
+public class BookService {
+
+	private final BookRepository bookRepository;
+	private final GoogleBooksClient googleBooksClient;
+	private final OpenLibraryClient openLibraryClient;
+
+	public BookService(BookRepository bookRepository, GoogleBooksClient googleBooksClient,
+			OpenLibraryClient openLibraryClient) {
+		this.bookRepository = bookRepository;
+		this.googleBooksClient = googleBooksClient;
+		this.openLibraryClient = openLibraryClient;
+	}
+
+	/**
+	 * 用 ISBN 查書。順序（BDD v1.2.0）：
+	 * 1. 去除前後空白，檢查是不是空的、是不是 13 碼數字
+	 * 2. 先查本機 books 表，有就直接回傳
+	 *    （舊資料從沒補過出版社、頁數、封面時，先向外部來源補一次，見 fillDetailsOfLocalBook）
+	 * 3. 本機沒有 → 問 Google Books；查到就存回本機再回傳
+	 *    （Google 缺出版社或頁數時，先問 Open Library 補上缺的欄位再存）
+	 * 4. Google 查無或無法使用 → 問 Open Library；查到就存回本機再回傳
+	 * 5. 都沒查到：
+	 *    - 兩個來源都明確回答「查無」→ 404 找不到此書籍
+	 *    - 有任一來源無法使用 → 503 查詢失敗，請稍後再試（無法使用的那個來源可能有這本書）
+	 */
+	public BookResponse findByIsbn(String rawIsbn) {
+		// 1. 格式檢查（正常情況前端已經擋掉空白，這裡是第二道防線）
+		String isbn = normalizeIsbn(rawIsbn);
+
+		// 2. 先查本機
+		Optional<Book> localBook = bookRepository.findById(isbn);
+		if (localBook.isPresent()) {
+			Book book = localBook.get();
+			if (book.getPublisher() == null) {
+				fillDetailsOfLocalBook(book);
+			}
+			return new BookResponse(book);
+		}
+
+		// 記錄「有沒有哪個外部來源無法使用」，決定最後要回 404 還是 503
+		boolean anySourceUnavailable = false;
+
+		// 3. 問 Google Books
+		try {
+			Optional<Book> googleBook = googleBooksClient.findByIsbn(isbn);
+			if (googleBook.isPresent()) {
+				fillMissingFromOpenLibrary(googleBook.get());
+				return saveAndRespond(googleBook.get());
+			}
+		} catch (BookSourceUnavailableException e) {
+			anySourceUnavailable = true; // 連不上沒關係，繼續問下一個來源
+		}
+
+		// 4. 問 Open Library
+		try {
+			Optional<Book> openLibraryBook = openLibraryClient.findByIsbn(isbn);
+			if (openLibraryBook.isPresent()) {
+				return saveAndRespond(openLibraryBook.get());
+			}
+		} catch (BookSourceUnavailableException e) {
+			anySourceUnavailable = true;
+		}
+
+		// 5. 都沒查到
+		if (anySourceUnavailable) {
+			throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, Messages.BOOK_LOOKUP_FAILED);
+		}
+		throw new ApiException(HttpStatus.NOT_FOUND, Messages.BOOK_NOT_FOUND);
+	}
+
+	/**
+	 * Google 查到的書缺出版社或頁數時，問 Open Library 補上（只補缺的欄位，其他欄位以 Google 為準）。
+	 * Open Library 查無或無法使用都沒關係，就照 Google 的資料存。
+	 */
+	private void fillMissingFromOpenLibrary(Book book) {
+		boolean missingPublisher = book.getPublisher() == null || book.getPublisher().isEmpty();
+		boolean missingPageCount = book.getPageCount() == null;
+		if (!missingPublisher && !missingPageCount) {
+			return; // 都有了，不用多問一次
+		}
+
+		Optional<Book> openLibraryBook;
+		try {
+			openLibraryBook = openLibraryClient.findByIsbn(book.getIsbn());
+		} catch (BookSourceUnavailableException e) {
+			return;
+		}
+		if (openLibraryBook.isEmpty()) {
+			return;
+		}
+
+		if (missingPublisher) {
+			book.setPublisher(openLibraryBook.get().getPublisher());
+		}
+		if (missingPageCount) {
+			book.setPageCount(openLibraryBook.get().getPageCount());
+		}
+	}
+
+	/**
+	 * 本機的舊資料（加入出版社、頁數、封面功能之前存的）這三個欄位都是 NULL，在這裡補一次。
+	 * 只補這三個欄位，書名、作者、出版日期維持原樣（收藏過的書資料不會變成別的版本）。
+	 *
+	 * 怎麼分辨「補過了沒」：外部來源查到的書，出版社至少會是空字串 ""，只有舊資料才是 NULL。
+	 * 補完後出版社一定不是 NULL，所以每本書只會補一次。
+	 * 兩個來源都無法使用時不存檔，出版社維持 NULL，下次查詢再試。
+	 */
+	private void fillDetailsOfLocalBook(Book book) {
+		boolean anySourceAnswered = false;
+
+		// 1. 問 Google Books（順序與查新書相同：以 Google 為準）
+		try {
+			Optional<Book> googleBook = googleBooksClient.findByIsbn(book.getIsbn());
+			anySourceAnswered = true;
+			if (googleBook.isPresent()) {
+				book.setPublisher(googleBook.get().getPublisher());
+				book.setPageCount(googleBook.get().getPageCount());
+				book.setCoverUrl(googleBook.get().getCoverUrl());
+			}
+		} catch (BookSourceUnavailableException e) {
+			// 繼續問 Open Library
+		}
+
+		// 2. 出版社或頁數還缺 → 問 Open Library 補
+		boolean missingPublisher = book.getPublisher() == null || book.getPublisher().isEmpty();
+		if (missingPublisher || book.getPageCount() == null) {
+			try {
+				Optional<Book> openLibraryBook = openLibraryClient.findByIsbn(book.getIsbn());
+				anySourceAnswered = true;
+				if (openLibraryBook.isPresent()) {
+					if (missingPublisher) {
+						book.setPublisher(openLibraryBook.get().getPublisher());
+					}
+					if (book.getPageCount() == null) {
+						book.setPageCount(openLibraryBook.get().getPageCount());
+					}
+				}
+			} catch (BookSourceUnavailableException e) {
+				// 沒關係，有拿到多少算多少
+			}
+		}
+
+		if (!anySourceAnswered) {
+			return; // 兩邊都連不上：不存檔，下次再補
+		}
+		if (book.getPublisher() == null) {
+			book.setPublisher(""); // 兩邊都查無：標記成「補過了」，以後不再重複查
+		}
+		bookRepository.save(book);
+	}
+
+	/** 存回本機（下次就不用再問外部來源），再轉成回應 */
+	private BookResponse saveAndRespond(Book book) {
+		Book saved = bookRepository.save(book);
+		return new BookResponse(saved);
+	}
+
+	/**
+	 * ISBN 格式規則（查書與加入收藏共用）：去除前後空白後，必須是 13 碼數字。
+	 *
+	 * @return 去除空白後的 ISBN
+	 * @throws ApiException 空白或格式錯誤時（400）
+	 */
+	public static String normalizeIsbn(String rawIsbn) {
+		String isbn = (rawIsbn == null) ? "" : rawIsbn.trim();
+		if (isbn.isEmpty()) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, Messages.ISBN_REQUIRED);
+		}
+		if (!isbn.matches("[0-9]{13}")) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, Messages.ISBN_INVALID);
+		}
+		return isbn;
+	}
+}
+```
+
+白話解釋：
+- **`fillMissingFromOpenLibrary`（查新書時）**：Google 查到書，但出版社是空的或頁數是 `null`，才多問一次 Open Library，**只補缺的那幾格**。Open Library 查無或連不上都沒關係，照 Google 的資料存。
+- **`fillDetailsOfLocalBook`（查舊書時）**：本機已有這本書，但出版社是 `NULL`（代表是加欄位之前存的），就向外部來源補一次。
+  - 只補出版社、頁數、封面。書名、作者、出版日期不動，所以收藏過的書不會突然變成別的版本。
+  - 補完後出版社**一定不是 `NULL`**（兩邊都查無就存 `""`），下次查詢就不會再補，每本書只多花一次時間。
+  - 兩邊都連不上（`anySourceAnswered` 還是 `false`）時**不存檔**，出版社維持 `NULL`，下次查詢再試，也不會跳錯誤。
+
+### 17-5 後端：種子書籍不補資料
+
+**`DataSeeder.java`**（修改的部分）
+
+```java
+	@Override
+	public void run(String... args) {
+		addBookIfMissing(seedBook("9789861343722", "侘寂：尋找日常中的不完美之美", "雷納·克魯克", "2020-05-01"));
+		addBookIfMissing(seedBook("9789863980315", "提問的設計", "安齋勇樹", "2021-09-10"));
+		addUserIfMissing("Cooqle", "0900123456");
+	}
+
+	/**
+	 * 種子書籍是示範資料，不向外部來源補出版社、頁數、封面
+	 * （例如 9789861343722 的檢查碼不正確，Google 會回傳另一本不相關的書）。
+	 * 出版社設成空字串，BookService 就會當作「補過了」。
+	 */
+	private static Book seedBook(String isbn, String title, String author, String publishDate) {
+		Book book = new Book(isbn, title, author, publishDate);
+		book.setPublisher("");
+		return book;
+	}
+
+	private void addBookIfMissing(Book book) {
+		Book existing = bookRepository.findById(book.getIsbn()).orElse(null);
+		if (existing != null) {
+			// 加入出版社欄位之前就存在的種子書籍，出版社是 NULL：一樣標記成「補過了」
+			if (existing.getPublisher() == null) {
+				existing.setPublisher("");
+				bookRepository.save(existing);
+			}
+			log.info("種子資料：書籍 {} 已存在，略過", book.getIsbn());
+			return;
+		}
+		bookRepository.save(book);
+		log.info("種子資料：新增書籍 {}（{}）", book.getIsbn(), book.getTitle());
+	}
+```
+
+- 為什麼種子書籍不補？`9789861343722` 是示範資料，檢查碼不正確；拿去問 Google，會回傳另一本不相關的書（《Blind Spots》），補的話就會掛上別本書的封面。
+- 你的 MySQL 裡已經有這兩本（出版社是 `NULL`），所以 `addBookIfMissing` 也會把已存在的種子書籍改成 `""`。後端重新啟動一次就好。
+
+### 17-6 前端：備用封面
+
+**`frontend/src/components/BookCover.vue`**（`<script>` 與 `<template>`，樣式沒有改）
+
+```vue
+<script setup>
+import { computed, ref, watch } from 'vue'
+
+const props = defineProps({
+  isbn: { type: String, required: true },
+  title: { type: String, default: '' },
+  coverUrl: { type: String, default: '' }, // 備用封面網址；沒有就是空字串或 null
+  size: { type: String, default: 'lg' },
+  lazy: { type: Boolean, default: false },
+})
+
+// default=false：沒有封面時 Open Library 回 404，瀏覽器就會觸發 @error
+const openLibrarySrc = computed(() => `https://covers.openlibrary.org/b/isbn/${props.isbn}-M.jpg?default=false`)
+
+const loaded = ref(false) // 圖片已經載入完成
+const useFallback = ref(false) // Open Library 失敗，改用備用封面
+const failed = ref(false) // 兩張都沒有或載入失敗
+
+const src = computed(() => (useFallback.value ? props.coverUrl : openLibrarySrc.value))
+
+/** 圖片載入失敗：還有備用封面就換它，沒有就顯示空白外框 */
+function onError() {
+  if (!useFallback.value && props.coverUrl) {
+    useFallback.value = true
+  } else {
+    failed.value = true
+  }
+}
+
+// 換了一本書（例如在首頁重新查詢）時，狀態要重新開始
+watch(
+  () => props.isbn,
+  () => {
+    loaded.value = false
+    useFallback.value = false
+    failed.value = false
+  },
+)
+</script>
+
+<template>
+  <!-- 外框本身就是空白封面框；圖片載入成功才會蓋在上面 -->
+  <div :class="['cover', `cover--${size}`]" :aria-hidden="failed ? 'true' : undefined">
+    <img
+      v-if="!failed"
+      :src="src"
+      :alt="`《${title}》封面`"
+      :loading="lazy ? 'lazy' : 'eager'"
+      :class="['cover__img', { 'is-loaded': loaded }]"
+      @load="loaded = true"
+      @error="onError"
+    />
+  </div>
+</template>
+```
+
+- 圖片載入失敗會觸發 `@error`。第一次失敗（Open Library 沒有）時，如果有 `coverUrl`，就把 `src` 換成它；第二次失敗（或根本沒有 `coverUrl`）才顯示空白框。
+- 首頁和收藏頁都改成多傳一個 `:cover-url="book.coverUrl"`（收藏頁是 `item.coverUrl`）。
+
+### 17-7 前端：出版社、頁數與清除按鈕
+
+**`frontend/src/components/BaseInput.vue`**（`<script>` 修改後）
+
+```vue
+<script setup>
+import { ref, useId } from 'vue'
+
+defineProps({
+  label: { type: String, required: true },
+  placeholder: { type: String, default: '' },
+  type: { type: String, default: 'text' },
+  /** 手機鍵盤類型，例如 'numeric' 會跳出數字鍵盤 */
+  inputmode: { type: String, default: undefined },
+  autocomplete: { type: String, default: 'off' },
+})
+
+// defineModel：讓父元件可以用 v-model 綁定這個輸入框的值
+const model = defineModel({ type: String, default: '' })
+
+// 產生不重複的 id，讓 <label for> 對到 <input id>（點標籤就能聚焦輸入框）
+const inputId = useId()
+
+// 讓父元件可以把游標移到輸入框（例如首頁按「清除」之後）
+const inputEl = ref(null)
+defineExpose({ focus: () => inputEl.value?.focus() })
+</script>
+```
+
+**`frontend/src/views/HomeView.vue`**（修改的部分）
+
+```js
+// <script setup> 裡（import 那一行多加 computed）
+const isbnField = ref(null) // ISBN 輸入框元件，清除後用來把游標移回去
+
+// 輸入框、結果、錯誤都是空的時候，「清除」沒有東西可清，先停用
+const nothingToClear = computed(() => !isbnInput.value && !book.value && !errorMessage.value)
+
+/** 按下「查詢」 */
+async function search() {
+  const isbn = isbnInput.value.trim()
+
+  // 每次查詢前先清掉上一次的結果與錯誤
+  book.value = null
+  errorMessage.value = ''
+
+  // 前端先驗證：空白、格式錯誤都不呼叫 API（設計決策 10）
+  const invalid = validateIsbn(isbn)
+  if (invalid) {
+    errorMessage.value = invalid
+    return
+  }
+
+  searching.value = true
+  const result = await api.get(`/api/books/${encodeURIComponent(isbn)}`)
+  searching.value = false
+
+  if (result.ok) {
+    book.value = result.data
+  } else {
+    // 404 找不到此書籍、503 查詢失敗，請稍後再試…都直接顯示後端的訊息
+    errorMessage.value = result.data.message
+  }
+}
+
+/** 按下「清除」：清空輸入框、結果與錯誤，回到初始狀態，游標移回輸入框方便貼上下一本 */
+function clearSearch() {
+  isbnInput.value = ''
+  book.value = null
+  errorMessage.value = ''
+  isbnField.value.focus()
+}
+```
+
+```vue
+<!-- 模板：查詢列 -->
+    <form class="search" @submit.prevent="search">
+      <BaseInput
+        ref="isbnField"
+        v-model="isbnInput"
+        class="search__input"
+        label="ISBN 查詢"
+        placeholder="請輸入 13 位數 ISBN 碼..."
+        inputmode="numeric"
+      />
+      <div class="search__actions">
+        <BaseButton type="submit" class="search__button" spaced :disabled="searching">
+          {{ searching ? '查詢中...' : '查詢' }}
+        </BaseButton>
+        <!-- 查詢中停用，避免清除後舊的查詢結果才回來 -->
+        <BaseButton
+          variant="secondary"
+          class="search__button"
+          spaced
+          :disabled="searching || nothingToClear"
+          @click="clearSearch"
+        >
+          清除
+        </BaseButton>
+      </div>
+    </form>
+```
+
+```vue
+<!-- 模板：結果卡片，「出版日期」下面多兩行 -->
+          <p class="result__line">出版日期：{{ orDash(book.publishDate) }}</p>
+          <p class="result__line">出版社：{{ orDash(book.publisher) }}</p>
+          <p class="result__line">頁數：{{ book.pageCount ? `${book.pageCount} 頁` : '—' }}</p>
+```
+
+```css
+/* ===== 查詢列：輸入框約 65%＋「查詢」「清除」兩個按鈕約 35%，同一列 ===== */
+.search {
+  display: flex;
+  align-items: flex-end; /* 按鈕對齊輸入框底部（輸入框上方有標籤） */
+  gap: 32px;
+  margin-bottom: 48px;
+}
+
+.search__input {
+  flex: 13;
+}
+
+.search__actions {
+  flex: 7;
+  display: flex;
+  gap: 12px;
+}
+
+.search__button {
+  flex: 1;
+  padding: 0 12px; /* 兩個按鈕並排，左右內距縮小，避免文字被擠到換行 */
+}
+```
+
+- `nothingToClear` 用 `computed`：輸入框、結果、錯誤任何一個有值，「清除」就能按。
+- **查詢中停用「清除」**：如果查詢中先清掉，舊的查詢結果晚一點回來，又會把結果放回畫面。
+- 清除按鈕的 `type` 沒寫，就是 `BaseButton` 預設的 `button`，按下去**不會送出表單**（只有「查詢」是 `type="submit"`）。
+- 手機版沿用原本的 `.search { flex-direction: column; }`：輸入框在上，`search__actions` 那一列的兩個按鈕並排在下方。
+
+### 對應的 Scenario（BDD v1.6.0）
+
+| BDD Scenario | 後端測試 | 瀏覽器實測 |
+|---|---|---|
+| Open Library 沒有封面時改用 Google Books 的封面 | `GoogleBooksClientTest.mapsPublisherPageCountAndCover`（https） | ✅（`9781950539864`） |
+| 查詢結果顯示出版社與頁數 | `BookApiTest.findBookFromGoogleAndSave` | ✅ |
+| Google Books 缺出版社或頁數時，由 Open Library 補上 | `BookApiTest.fillMissingFieldsFromOpenLibrary` | ✅（`9781950539864` 出版社 Dzanc Books） |
+| 外部來源都沒有出版社或頁數時顯示「—」（3 組） | `fillMissingFieldsButOpenLibraryUnavailable`、兩個 client 的 `missing...` 測試 | ✅（後兩本的頁數） |
+| 本機舊資料補上出版社、頁數與封面 | `BookApiTest.fillDetailsOfOldLocalBook` | ✅（3 本舊資料） |
+| 本機舊資料補資料時外部來源都無法連線 | `BookApiTest.oldLocalBookSourcesUnavailable` | — |
+| 點擊「清除」清空查詢 | 純前端 | ✅ |
+| 查詢錯誤後點擊「清除」 | 純前端 | ⬜ |
+| 沒有可清除的內容時「清除」按鈕停用 | 純前端 | ⬜ |
+
+### 怎麼驗證成功
+
+**驗證 1：跑測試**
+```bash
+cd backend
+```
+```bash
+./mvnw test
+```
+實測結果（2026-11-02）：共 **85** 個測試全部通過（`BookApiTest` 12 → 17、`GoogleBooksClientTest` 5 → 7、`OpenLibraryClientTest` 6 → 8）。
+
+**驗證 2：直接問 API（後端重新啟動後）**
+```bash
+curl -s localhost:8080/api/books/9781950539864
+```
+回應要有 `"publisher":"Dzanc Books"`、`"coverUrl":"https://books.google.com/..."`；`pageCount` 是 `null`（兩個來源都沒有頁數）。
+
+**驗證 3：瀏覽器實測（2026-11-02）**
+| ISBN | 出版社 | 頁數 | 封面 |
+|---|---|---|---|
+| 9780393356250 | National Geographic Books | 592 頁 | 有 |
+| 9781950539864 | Dzanc Books | — | 有（Google） |
+| 9781988963655 | Universitas Press | — | 有（Google） |
+
+這三本都是加欄位之前就存在本機的舊資料，第一次查詢時補上，之後再查不會重新問外部來源。
+封面與出版社由使用者在瀏覽器確認；頁數欄是開發時用 curl 查兩個 API 得到的預期值。
+
+**常見問題**
+| 症狀 | 原因與處理 |
+|---|---|
+| 出版社、頁數一直是「—」，API 回應裡 `publisher` 是 `null` | 後端還是舊程式。在 Eclipse 停止後重新 Run `LibraryApplication` |
+| 舊書一直沒補上 | 補資料時兩個外部來源都連不上，所以沒有存檔；網路恢復後再查一次就會補 |
+| The Odyssey 的出版社和 Open Library 網站上不同 | 正常：以 Google 為準，Google 給的是 National Geographic Books |
+| 想讓某本書重新補一次 | 在 MySQL 把那本書的 `publisher` 改回 `NULL`：`UPDATE books SET publisher = NULL WHERE isbn = '...';` |
+
+### 17-8 在本機合併進 main
+和步驟 15-7 相同，把分支名稱換成 `feature/book-publisher-pages`：
+```bash
+git switch main
+```
+```bash
+git pull --ff-only
+```
+```bash
+git merge --no-ff feature/book-publisher-pages
+```
+```bash
+git push origin main
+```
+```bash
+git branch -d feature/book-publisher-pages
 ```
 
 ---

@@ -30,13 +30,30 @@ public class DataSeeder implements CommandLineRunner {
 
 	@Override
 	public void run(String... args) {
-		addBookIfMissing(new Book("9789861343722", "侘寂：尋找日常中的不完美之美", "雷納·克魯克", "2020-05-01"));
-		addBookIfMissing(new Book("9789863980315", "提問的設計", "安齋勇樹", "2021-09-10"));
+		addBookIfMissing(seedBook("9789861343722", "侘寂：尋找日常中的不完美之美", "雷納·克魯克", "2020-05-01"));
+		addBookIfMissing(seedBook("9789863980315", "提問的設計", "安齋勇樹", "2021-09-10"));
 		addUserIfMissing("Cooqle", "0900123456");
 	}
 
+	/**
+	 * 種子書籍是示範資料，不向外部來源補出版社、頁數、封面
+	 * （例如 9789861343722 的檢查碼不正確，Google 會回傳另一本不相關的書）。
+	 * 出版社設成空字串，BookService 就會當作「補過了」。
+	 */
+	private static Book seedBook(String isbn, String title, String author, String publishDate) {
+		Book book = new Book(isbn, title, author, publishDate);
+		book.setPublisher("");
+		return book;
+	}
+
 	private void addBookIfMissing(Book book) {
-		if (bookRepository.existsById(book.getIsbn())) {
+		Book existing = bookRepository.findById(book.getIsbn()).orElse(null);
+		if (existing != null) {
+			// 加入出版社欄位之前就存在的種子書籍，出版社是 NULL：一樣標記成「補過了」
+			if (existing.getPublisher() == null) {
+				existing.setPublisher("");
+				bookRepository.save(existing);
+			}
 			log.info("種子資料：書籍 {} 已存在，略過", book.getIsbn());
 			return;
 		}

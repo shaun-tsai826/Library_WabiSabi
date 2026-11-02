@@ -63,6 +63,36 @@ class GoogleBooksClientTest {
 	}
 
 	@Test
+	@DisplayName("出版社、頁數照原樣；封面網址改成 https")
+	void mapsPublisherPageCountAndCover() {
+		Optional<Book> book = parse("""
+				{"items": [{"volumeInfo": {
+				  "title": "書", "publisher": "某出版社", "pageCount": 464,
+				  "imageLinks": {"thumbnail": "http://books.google.com/books/content?id=abc&zoom=1"}
+				}}]}
+				""");
+		assertThat(book.get().getPublisher()).isEqualTo("某出版社");
+		assertThat(book.get().getPageCount()).isEqualTo(464);
+		assertThat(book.get().getCoverUrl()).isEqualTo("https://books.google.com/books/content?id=abc&zoom=1");
+	}
+
+	@Test
+	@DisplayName("頁數是 0 或沒有頁數、沒有封面時存 null；沒有出版社時存空字串")
+	void missingPublisherPageCountAndCover() {
+		Optional<Book> zeroPages = parse("""
+				{"items": [{"volumeInfo": {"title": "書", "pageCount": 0}}]}
+				""");
+		assertThat(zeroPages.get().getPageCount()).isNull();
+
+		Optional<Book> book = parse("""
+				{"items": [{"volumeInfo": {"title": "只有書名"}}]}
+				""");
+		assertThat(book.get().getPublisher()).isEmpty();
+		assertThat(book.get().getPageCount()).isNull();
+		assertThat(book.get().getCoverUrl()).isNull();
+	}
+
+	@Test
 	@DisplayName("Google 查無資料（totalItems 0、沒有 items）→ 查不到")
 	void noItems() {
 		assertThat(parse("""

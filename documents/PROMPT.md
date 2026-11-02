@@ -1,8 +1,8 @@
 ---
 name: library-project-prompt
-version: v1.6.0
-date: 2026-10-23
-requires: BDD.md v1.5.0, DESIGN.md v1.4.0
+version: v1.7.0
+date: 2026-11-02
+requires: BDD.md v1.6.0, DESIGN.md v1.5.0
 ---
 
 # Library_WabiSabi：Claude Code 專案提示詞
@@ -12,8 +12,8 @@ requires: BDD.md v1.5.0, DESIGN.md v1.4.0
 版本紀錄在本文件最下方，不需要貼進去。
 
 ```text
-【提示詞版本】v1.6.0（2026-10-23）
-【對應文件版本】BDD.md v1.5.0、DESIGN.md v1.4.0。若專案內文件的版本與此不同，請先告訴我再開始。
+【提示詞版本】v1.7.0（2026-11-02）
+【對應文件版本】BDD.md v1.6.0、DESIGN.md v1.5.0。若專案內文件的版本與此不同，請先告訴我再開始。
 
 請幫我從零建立「圖書收藏與會員系統」，網站名稱 Library_WabiSabi。
 
@@ -128,6 +128,9 @@ backend/src/main/resources/application-local.properties（不進 git），由我
 10. ISBN 空白時，「請輸入 ISBN 碼」由前端直接提示、不呼叫 API（網址路徑放不了空值）；格式錯誤則前後端都要檢查。
 11. 全新暱稱與手機自動註冊後，提示文字與一般登入相同：「登入成功」。
 12. 外部書籍資料對應（Google Books、Open Library 相同）：書名只取 title（不含副標題）；多位作者用「、」連接；出版日期照原樣存。
+    出版社：Google 取 publisher；Open Library 取 publishers[].name，多家用「、」連接；沒有時存空字串。
+    頁數：Google 取 pageCount、Open Library 取 number_of_pages；沒有或為 0 時存 null。
+    Google 缺出版社或頁數時，向 Open Library 補上缺的欄位（其他欄位以 Google 為準）；Open Library 查無或無法使用時照 Google 的資料存。
     Google Books 可設定 API 金鑰（放在 application-local.properties）；沒設定時不帶金鑰呼叫（Google 的匿名上限為 0，會回 429）。
     Open Library 不需要金鑰，請在 User-Agent 帶上程式名稱（不含個人 email）。
 13. 前端打開網頁時先呼叫 GET /api/auth/me 取得登入狀態，路由守衛等這個結果出來才判斷是否放行，
@@ -144,10 +147,15 @@ backend/src/main/resources/application-local.properties（不進 git），由我
 17. 收藏統計 Dashboard：收藏頁可切換「清單／統計」（狀態記在網址 /favorites?view=stats）。統計在前端以全部收藏計算，
     不受搜尋與種類篩選影響：3 張總覽數字卡（收藏總數、本月新增、最多的種類）、種類比例甜甜圈圖（CSS conic-gradient）、
     最近 12 個月每月新增本數折線圖（手寫 SVG）。不使用圖表套件；色票與版面見 DESIGN.md 第 2 節、4.13～4.16、5.3-c。
+18. 備用封面：Google Books 的封面網址（imageLinks.thumbnail，改成 https://）存在 books.cover_url；
+    前端先載入 Open Library 封面，失敗時改用 coverUrl，也沒有才顯示空白框（DESIGN.md 4.10）。
+19. 本機舊資料補資料：出版社為 NULL 的書（加入這些欄位之前存的）查詢時向外部來源補一次，只補出版社、頁數、封面。
+    補過後出版社至少是空字串，之後不再重複查；兩個來源都無法使用時不存檔，下次再試。種子書籍出版社存空字串，不補。
+20. 首頁「清除」按鈕：清空輸入框、查詢結果與錯誤，游標移回輸入框；查詢中或沒有東西可清時停用（DESIGN.md 5.1）。
 
 【資料表】
 - users：id、nickname、nickname_lower（唯一）、mobile（唯一）、created_at
-- books：isbn（主鍵，13 碼）、title、author、publish_date（字串）
+- books：isbn（主鍵，13 碼）、title、author、publish_date（字串）、publisher、page_count（可為空值）、cover_url（可為空值）
 - favorites：id、user_id（外鍵）、isbn（外鍵）、category（VARCHAR(20)，可為空值）、created_at，(user_id, isbn) 設唯一鍵
 - 種子資料：BDD.md 的 2 本書，以及會員 Cooqle / 0900123456
 
@@ -163,6 +171,7 @@ backend/src/main/resources/application-local.properties（不進 git），由我
 - PUT /api/favorites/{id}/category：需登入，內容 {"category": "小說"}；200 已更新書籍種類；400 書籍種類不正確；
   404 不存在或不是本人的收藏
 - GET /api/favorites 的每筆資料加上 category（空值時回「未分類」）與 createdAt（收藏時間，ISO 格式）
+- GET /api/books/{isbn} 與 GET /api/favorites 的書籍資料加上 publisher、pageCount、coverUrl
 
 【前端頁面】
 共 4 個路由、7 張線稿，詳見 DESIGN.md 第 5 節：
@@ -192,6 +201,12 @@ backend/src/main/resources/application-local.properties（不進 git），由我
 - MAJOR：技術棧或整體架構改變（例如換前端框架、換資料庫）
 - MINOR：新增或調整功能規則、設計決策
 - PATCH：只修正文字、錯字、說明
+
+### v1.7.0（2026-11-02）出版社、頁數、備用封面與清除按鈕
+- 修改：設計決策 12 加入出版社、頁數的欄位對應，以及「Google 缺的欄位由 Open Library 補」。
+- 新增：設計決策 18 備用封面（Google Books）、19 本機舊資料補資料、20 首頁清除按鈕。
+- 新增：books.publisher、books.page_count、books.cover_url；書籍 API 回傳 publisher、pageCount、coverUrl。
+- 對應文件：BDD.md v1.6.0、DESIGN.md v1.5.0。
 
 ### v1.6.0（2026-10-23）收藏統計 Dashboard
 - 新增：設計決策 17 收藏統計 Dashboard（清單／統計切換、總覽數字、甜甜圈圖、每月折線圖；前端計算、不使用圖表套件）。

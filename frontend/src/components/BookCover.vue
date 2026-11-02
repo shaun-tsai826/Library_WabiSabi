@@ -1,7 +1,8 @@
 <!--
-  書籍封面（DESIGN.md 4.10）：用 ISBN 向 Open Library 封面服務取得圖片。
+  書籍封面（DESIGN.md 4.10）：用 ISBN 向 Open Library 封面服務取得圖片；
+  Open Library 沒有封面時，改用後端給的備用封面網址（Google Books）。
   載入中、沒有封面、載入失敗：都只顯示空白外框（不放圖示、不放文字、不顯示錯誤）。
-  用法：<BookCover :isbn="book.isbn" :title="book.title" size="lg" />
+  用法：<BookCover :isbn="book.isbn" :title="book.title" :cover-url="book.coverUrl" size="lg" />
     size：lg（首頁結果卡片 120×180，手機 100×150）／sm（收藏卡片 64×96，手機 56×84）
     lazy：捲動到附近才載入（收藏頁使用）
 -->
@@ -11,21 +12,35 @@ import { computed, ref, watch } from 'vue'
 const props = defineProps({
   isbn: { type: String, required: true },
   title: { type: String, default: '' },
+  coverUrl: { type: String, default: '' }, // 備用封面網址；沒有就是空字串或 null
   size: { type: String, default: 'lg' },
   lazy: { type: Boolean, default: false },
 })
 
 // default=false：沒有封面時 Open Library 回 404，瀏覽器就會觸發 @error
-const src = computed(() => `https://covers.openlibrary.org/b/isbn/${props.isbn}-M.jpg?default=false`)
+const openLibrarySrc = computed(() => `https://covers.openlibrary.org/b/isbn/${props.isbn}-M.jpg?default=false`)
 
 const loaded = ref(false) // 圖片已經載入完成
-const failed = ref(false) // 沒有封面或載入失敗
+const useFallback = ref(false) // Open Library 失敗，改用備用封面
+const failed = ref(false) // 兩張都沒有或載入失敗
+
+const src = computed(() => (useFallback.value ? props.coverUrl : openLibrarySrc.value))
+
+/** 圖片載入失敗：還有備用封面就換它，沒有就顯示空白外框 */
+function onError() {
+  if (!useFallback.value && props.coverUrl) {
+    useFallback.value = true
+  } else {
+    failed.value = true
+  }
+}
 
 // 換了一本書（例如在首頁重新查詢）時，狀態要重新開始
 watch(
   () => props.isbn,
   () => {
     loaded.value = false
+    useFallback.value = false
     failed.value = false
   },
 )
@@ -41,7 +56,7 @@ watch(
       :loading="lazy ? 'lazy' : 'eager'"
       :class="['cover__img', { 'is-loaded': loaded }]"
       @load="loaded = true"
-      @error="failed = true"
+      @error="onError"
     />
   </div>
 </template>

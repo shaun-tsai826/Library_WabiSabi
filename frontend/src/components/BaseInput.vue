@@ -1,9 +1,10 @@
 <!--
   輸入框：上方標籤＋白色輸入框（DESIGN.md 4.4）。
   用法：<BaseInput v-model="isbn" label="ISBN 查詢" placeholder="請輸入 13 位數 ISBN 碼..." />
+  父元件可用 ref 呼叫 focus()，把游標移到輸入框
 -->
 <script setup>
-import { useId } from 'vue'
+import { ref, useId } from 'vue'
 
 defineProps({
   label: { type: String, required: true },
@@ -19,6 +20,10 @@ const model = defineModel({ type: String, default: '' })
 
 // 產生不重複的 id，讓 <label for> 對到 <input id>（點標籤就能聚焦輸入框）
 const inputId = useId()
+
+// 讓父元件可以把游標移到輸入框（例如首頁按「清除」之後）
+const inputEl = ref(null)
+defineExpose({ focus: () => inputEl.value?.focus() })
 </script>
 
 <template>
@@ -26,6 +31,7 @@ const inputId = useId()
     <label class="field__label" :for="inputId">{{ label }}</label>
     <input
       :id="inputId"
+      ref="inputEl"
       v-model="model"
       class="field__input"
       :type="type"

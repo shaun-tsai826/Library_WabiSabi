@@ -47,6 +47,30 @@ class OpenLibraryClientTest {
 	}
 
 	@Test
+	@DisplayName("多家出版社用「、」連接，頁數照原樣")
+	void mapsPublishersAndPageCount() {
+		Optional<Book> book = parse("""
+				{"ISBN:9780132350884": {
+				  "title": "Clean Code",
+				  "publishers": [{"name": "Prentice Hall"}, {"name": "Pearson"}],
+				  "number_of_pages": 431
+				}}
+				""");
+		assertThat(book.get().getPublisher()).isEqualTo("Prentice Hall、Pearson");
+		assertThat(book.get().getPageCount()).isEqualTo(431);
+	}
+
+	@Test
+	@DisplayName("沒有出版社時存空字串、沒有頁數時存 null")
+	void missingPublisherAndPageCount() {
+		Optional<Book> book = parse("""
+				{"ISBN:9780132350884": {"title": "只有書名"}}
+				""");
+		assertThat(book.get().getPublisher()).isEmpty();
+		assertThat(book.get().getPageCount()).isNull();
+	}
+
+	@Test
 	@DisplayName("Open Library 查無資料（回傳空的 {}）→ 查不到")
 	void emptyObject() {
 		assertThat(parse("{}")).isEmpty();
