@@ -3,7 +3,7 @@
   三種狀態：初始（虛線空狀態框）、查詢成功（結果卡片）、查詢錯誤（紅色錯誤框）。
 -->
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import PageTitle from '@/components/PageTitle.vue'
 import BaseInput from '@/components/BaseInput.vue'
@@ -26,6 +26,10 @@ const book = ref(null) // 查到的書；null = 沒有結果
 const errorMessage = ref('') // 錯誤訊息；'' = 沒有錯誤
 const searching = ref(false) // 是否正在查詢（按鈕顯示「查詢中...」）
 const adding = ref(false) // 是否正在加入收藏（避免連按）
+const isbnField = ref(null) // ISBN 輸入框元件，清除後用來把游標移回去
+
+// 輸入框、結果、錯誤都是空的時候，「清除」沒有東西可清，先停用
+const nothingToClear = computed(() => !isbnInput.value && !book.value && !errorMessage.value)
 
 /** 按下「查詢」 */
 async function search() {
@@ -52,6 +56,14 @@ async function search() {
     // 404 找不到此書籍、503 查詢失敗，請稍後再試…都直接顯示後端的訊息
     errorMessage.value = result.data.message
   }
+}
+
+/** 按下「清除」：清空輸入框、結果與錯誤，回到初始狀態，游標移回輸入框方便貼上下一本 */
+function clearSearch() {
+  isbnInput.value = ''
+  book.value = null
+  errorMessage.value = ''
+  isbnField.value.focus()
 }
 
 /** 按下「+ 加入收藏」 */
@@ -97,15 +109,28 @@ function orDash(value) {
     <!-- form + @submit.prevent：按 Enter 也能查詢，而且不會重新整理網頁 -->
     <form class="search" @submit.prevent="search">
       <BaseInput
+        ref="isbnField"
         v-model="isbnInput"
         class="search__input"
         label="ISBN 查詢"
         placeholder="請輸入 13 位數 ISBN 碼..."
         inputmode="numeric"
       />
-      <BaseButton type="submit" class="search__button" spaced :disabled="searching">
-        {{ searching ? '查詢中...' : '查詢' }}
-      </BaseButton>
+      <div class="search__actions">
+        <BaseButton type="submit" class="search__button" spaced :disabled="searching">
+          {{ searching ? '查詢中...' : '查詢' }}
+        </BaseButton>
+        <!-- 查詢中停用，避免清除後舊的查詢結果才回來 -->
+        <BaseButton
+          variant="secondary"
+          class="search__button"
+          spaced
+          :disabled="searching || nothingToClear"
+          @click="clearSearch"
+        >
+          清除
+        </BaseButton>
+      </div>
     </form>
 
     <!-- 狀態 (c)：查詢錯誤 -->
@@ -115,12 +140,20 @@ function orDash(value) {
     <BaseCard v-else-if="book">
       <!-- 左封面、右資訊（手機版改成上下排列，見下方 CSS） -->
       <div class="result">
-        <BookCover :isbn="book.isbn" :title="book.title" size="lg" class="result__cover" />
+        <BookCover
+          :isbn="book.isbn"
+          :title="book.title"
+          :cover-url="book.coverUrl"
+          size="lg"
+          class="result__cover"
+        />
         <div class="result__info">
           <p class="result__caption"><strong>查詢結果</strong> (Search Result)</p>
           <h2 class="result__title">書名：{{ book.title }}</h2>
           <p class="result__line">作者：{{ orDash(book.author) }}</p>
           <p class="result__line">出版日期：{{ orDash(book.publishDate) }}</p>
+          <p class="result__line">出版社：{{ orDash(book.publisher) }}</p>
+          <p class="result__line">頁數：{{ book.pageCount ? `${book.pageCount} 頁` : '—' }}</p>
           <p class="result__isbn">ISBN：{{ book.isbn }}</p>
           <BaseButton variant="secondary" class="result__add" :disabled="adding" @click="addFavorite">
             + 加入收藏
@@ -137,7 +170,7 @@ function orDash(value) {
 </template>
 
 <style scoped>
-/* ===== 查詢列：輸入框約 70%＋按鈕約 30%，同一列 ===== */
+/* ===== 查詢列：輸入框約 65%＋「查詢」「清除」兩個按鈕約 35%，同一列 ===== */
 .search {
   display: flex;
   align-items: flex-end; /* 按鈕對齊輸入框底部（輸入框上方有標籤） */
@@ -146,11 +179,18 @@ function orDash(value) {
 }
 
 .search__input {
+  flex: 13;
+}
+
+.search__actions {
   flex: 7;
+  display: flex;
+  gap: 12px;
 }
 
 .search__button {
-  flex: 3;
+  flex: 1;
+  padding: 0 12px; /* 兩個按鈕並排，左右內距縮小，避免文字被擠到換行 */
 }
 
 /* ===== 結果卡片：左封面（120×180）、右資訊（DESIGN.md 5.1-b、4.10） ===== */

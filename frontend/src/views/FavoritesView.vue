@@ -240,7 +240,7 @@ function handleSessionExpired() {
             <BaseCard class="item">
               <!-- 左邊：封面縮圖＋書名與資訊（手機版這兩個仍在同一列） -->
               <div class="item__main">
-                <BookCover :isbn="item.isbn" :title="item.title" size="sm" lazy />
+                <BookCover :isbn="item.isbn" :title="item.title" :cover-url="item.coverUrl" size="sm" lazy />
                 <div class="item__info">
                   <h3 class="item__title">{{ item.title }}</h3>
                   <p class="item__meta">作者：{{ item.author || '—' }} | ISBN: {{ item.isbn }}</p>
