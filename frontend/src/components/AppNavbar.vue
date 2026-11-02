@@ -1,6 +1,6 @@
 <!--
   頂部導覽列（DESIGN.md 4.1）：所有頁面共用。
-  左：LIBRARY / 侘寂書閣（回首頁）；右：首頁 ｜ 我的收藏 ｜ 登入 / 註冊（或「暱稱 (個人頁)」）
+  左：Library_WabiSabi（回首頁）；右：首頁 ｜ 我的收藏 ｜ 登入 / 註冊（或「暱稱 (個人頁)」）
 -->
 <script setup>
 import { useRoute } from 'vue-router'
@@ -12,7 +12,7 @@ const route = useRoute()
 
 <template>
   <header class="navbar">
-    <RouterLink to="/" class="navbar__logo">LIBRARY / <strong>侘寂書閣</strong></RouterLink>
+    <RouterLink to="/" class="navbar__logo"><strong>Library_WabiSabi</strong></RouterLink>
 
     <nav class="navbar__menu">
       <RouterLink to="/" :class="['navbar__item', { 'is-active': route.path === '/' }]">首頁</RouterLink>

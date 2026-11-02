@@ -1,4 +1,4 @@
-# MANUAL_TEST.md：LIBRARY / 侘寂書閣 手動測試紀錄
+# MANUAL_TEST.md：Library_WabiSabi 手動測試紀錄
 
 > 對應文件：BDD.md v1.5.0、DESIGN.md v1.4.0（v1.2.0 新增 Open Library 備援來源，見 STEPS.md 步驟 13；v1.3.0 新增書籍封面，見步驟 14；v1.4.0 新增收藏種類與搜尋，見步驟 15；v1.5.0 新增收藏統計，見步驟 16）
 > 用途：在瀏覽器中逐項驗收前端行為（後端 API 另有 76 個自動測試，見 STEPS.md 步驟 16）。

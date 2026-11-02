@@ -15,7 +15,7 @@
 	<artifactId>library</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name>library</name>
-	<description>LIBRARY / 侘寂書閣 後端</description>
+	<description>Library_WabiSabi 後端</description>
 
 	<properties>
 		<java.version>21</java.version>
